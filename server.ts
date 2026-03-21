@@ -11,14 +11,21 @@ app.use(cors());
 const PORT = 3000;
 
 // Initialize DB Connection
-const pool = new Pool({
-  user: 'anasel',
-  password: 'AnaselSecurity2025',
-  host: '45.88.188.129',
-  port: 5332,
-  database: 'postgres',
+const dbConfig = {
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  host: process.env.DB_HOST,
+  port: parseInt(process.env.DB_PORT || '5432'),
+  database: process.env.DB_NAME,
   ssl: false
-});
+};
+
+if (!dbConfig.user || !dbConfig.password || !dbConfig.host || !dbConfig.database) {
+  console.error('Missing required database environment variables.');
+  process.exit(1);
+}
+
+const pool = new Pool(dbConfig);
 
 // Setup DB tables
 async function setupDB() {

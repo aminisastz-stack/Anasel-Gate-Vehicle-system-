@@ -328,6 +328,8 @@ export default function App() {
   const [addModalType, setAddModalType] = useState<'company' | 'site' | 'user' | 'vehicle' | 'banned' | null>(null);
   const [newItemData, setNewItemData] = useState<any>({});
   const [manualPlate, setManualPlate] = useState('');
+  const [authorizedSearchQuery, setAuthorizedSearchQuery] = useState('');
+  const [authorizedStatusFilter, setAuthorizedStatusFilter] = useState<'all' | 'checked-in' | 'checked-out'>('all');
   const [scannedVehicle, setScannedVehicle] = useState<Vehicle | null>(null);
   const [scannedLogs, setScannedLogs] = useState<AccessLog[]>([]);
   const [isScanningVehicle, setIsScanningVehicle] = useState<'qr' | 'plate' | null>(null);
@@ -2534,10 +2536,37 @@ export default function App() {
                 </button>
                 <h2 className="text-white font-bold text-xl">Authorized List Report</h2>
               </div>
+              
+              {/* Search and Filter Bar */}
+              <div className="mt-6 flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Search plate or owner..."
+                  value={authorizedSearchQuery}
+                  onChange={(e) => setAuthorizedSearchQuery(e.target.value)}
+                  className="flex-1 bg-white/10 text-white placeholder-white/50 border border-white/20 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-white/20"
+                />
+                <select
+                  value={authorizedStatusFilter}
+                  onChange={(e) => setAuthorizedStatusFilter(e.target.value as any)}
+                  className="bg-white/10 text-white border border-white/20 rounded-2xl p-4 focus:outline-none focus:ring-2 focus:ring-white/20"
+                >
+                  <option value="all" className="text-slate-900">All Status</option>
+                  <option value="checked-in" className="text-slate-900">Checked-in</option>
+                  <option value="checked-out" className="text-slate-900">Checked-out</option>
+                </select>
+              </div>
             </div>
 
             <div className="p-4 -mt-8 space-y-4 flex-1 overflow-y-auto pb-20">
-              {vehicles.filter(v => isAuthorized(v, 'vehicle')).map((vehicle, index) => (
+              {vehicles
+                .filter(v => isAuthorized(v, 'vehicle'))
+                .filter(v => 
+                  (authorizedStatusFilter === 'all' || v.status === authorizedStatusFilter) &&
+                  (v.plateNumber.toLowerCase().includes(authorizedSearchQuery.toLowerCase()) || 
+                   v.ownerName.toLowerCase().includes(authorizedSearchQuery.toLowerCase()))
+                )
+                .map((vehicle, index) => (
                 <motion.div 
                   key={vehicle.id}
                   initial={{ opacity: 0, y: 20 }}
@@ -2626,10 +2655,17 @@ export default function App() {
                   </div>
                 </motion.div>
               ))}
-              {vehicles.filter(v => isAuthorized(v, 'vehicle')).length === 0 && (
+              {vehicles
+                .filter(v => isAuthorized(v, 'vehicle'))
+                .filter(v => 
+                  (authorizedStatusFilter === 'all' || v.status === authorizedStatusFilter) &&
+                  (v.plateNumber.toLowerCase().includes(authorizedSearchQuery.toLowerCase()) || 
+                   v.ownerName.toLowerCase().includes(authorizedSearchQuery.toLowerCase()))
+                )
+                .length === 0 && (
                 <div className="flex flex-col items-center justify-center py-12 text-slate-400">
                   <Car className="w-12 h-12 mb-4 opacity-20" />
-                  <p className="font-medium">No authorized vehicles found</p>
+                  <p className="font-medium">No vehicles match your search</p>
                 </div>
               )}
             </div>
