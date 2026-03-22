@@ -363,6 +363,9 @@ export default function App() {
   const [plateFormatError, setPlateFormatError] = useState<string | null>(null);
   const [showPlateReviewModal, setShowPlateReviewModal] = useState(false);
   const [pendingPlate, setPendingPlate] = useState<{ imageSrc: string, plate: string } | null>(null);
+  const [capturedImageSrc, setCapturedImageSrc] = useState<string | null>(null);
+  const [detectedPlate, setDetectedPlate] = useState<string>('');
+  const [isDecodingPlate, setIsDecodingPlate] = useState(false);
 
   // Tanzanian Plate Formatting & Validation
   const formatTanzanianPlate = (value: string) => {
@@ -3490,7 +3493,16 @@ export default function App() {
                   onClick={() => {
                     const imageSrc = webcamRef.current?.getScreenshot();
                     if (imageSrc) {
-                      processVehicleScan(imageSrc);
+                      if (cameraType === 'plate') {
+                        setCapturedImageSrc(imageSrc);
+                        setIsDecodingPlate(true);
+                        decodePlateFromBase64(imageSrc).then((p) => {
+                          setDetectedPlate(p || '');
+                          setIsDecodingPlate(false);
+                        });
+                      } else {
+                        processVehicleScan(imageSrc);
+                      }
                     }
                   }}
                   className="w-20 h-20 bg-deep-blue rounded-full flex items-center justify-center text-white shadow-xl active:scale-90 transition-all hover:bg-deep-blue/90"
@@ -3500,6 +3512,64 @@ export default function App() {
                 <p className="mt-4 text-slate-400 font-bold text-[10px] uppercase tracking-widest">
                   {cameraType === 'qr' ? 'Auto scanning… Hold QR steady in the frame' : 'Auto scanning… Hold plate steady; use good lighting'}
                 </p>
+                {cameraType === 'plate' && capturedImageSrc && (
+                  <div className="w-full mt-4 space-y-3">
+                    <div className="rounded-2xl overflow-hidden border border-slate-200">
+                      <img src={capturedImageSrc} alt="Captured plate" className="w-full h-40 object-cover" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Gemini Detected Plate</label>
+                      <input 
+                        type="text"
+                        value={detectedPlate}
+                        onChange={(e) => setDetectedPlate(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-3 px-4 text-slate-900 focus:ring-2 focus:ring-deep-blue/20 transition-all font-mono"
+                        placeholder="T 123 ABC or T 123 CD 456"
+                      />
+                      {isDecodingPlate && (
+                        <p className="text-[10px] font-bold text-deep-blue uppercase tracking-widest mt-1">Reading plate…</p>
+                      )}
+                      {plateFormatError && (
+                        <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest mt-1">{plateFormatError}</p>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                      <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={async () => {
+                          const normalized = normalizePlate(detectedPlate);
+                          if (!isValidTanzanianPlate(normalized)) {
+                            setPlateFormatError("Invalid format. Use T 123 ABC or T 123 CD 456");
+                            setTimeout(() => setPlateFormatError(null), 3000);
+                            return;
+                          }
+                          const formatted = formatPlateForDisplay(normalized);
+                          await commitPlateActivity(formatted, {});
+                          setCapturedImageSrc(null);
+                          setDetectedPlate('');
+                          setIsDecodingPlate(false);
+                          setShowCamera(false);
+                        }}
+                        className="w-full bg-[#0a2540] text-white font-bold py-4 rounded-[20px] shadow-lg active:scale-[0.98] transition-all"
+                      >
+                        Submit Plate
+                      </motion.button>
+                      <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => {
+                          setCapturedImageSrc(null);
+                          setDetectedPlate('');
+                          setIsDecodingPlate(false);
+                        }}
+                        className="w-full bg-slate-100 text-slate-700 font-bold py-4 rounded-[20px] active:scale-[0.98] transition-all"
+                      >
+                        Recapture
+                      </motion.button>
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           </div>
