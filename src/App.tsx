@@ -342,6 +342,7 @@ export default function App() {
   const [cameraType, setCameraType] = useState<'qr' | 'plate' | null>(null);
   const webcamRef = useRef<Webcam>(null);
   const qrDetectingRef = useRef(false);
+  const plateDetectingRef = useRef(false);
   const profileCamRef = useRef<Webcam>(null);
   const [showProfileCam, setShowProfileCam] = useState<'add' | 'edit' | null>(null);
   const profilePhotoInputRef = useRef<HTMLInputElement>(null);
@@ -511,6 +512,22 @@ export default function App() {
       loop();
       return () => {
         qrDetectingRef.current = false;
+      };
+    } else if (showCamera && cameraType === 'plate') {
+      plateDetectingRef.current = true;
+      const loop = async () => {
+        if (!plateDetectingRef.current) return;
+        const imageSrc = webcamRef.current?.getScreenshot();
+        if (imageSrc) {
+          plateDetectingRef.current = false;
+          await processVehicleScan(imageSrc);
+          return;
+        }
+        setTimeout(loop, 300);
+      };
+      loop();
+      return () => {
+        plateDetectingRef.current = false;
       };
     }
   }, [showCamera, cameraType]);
