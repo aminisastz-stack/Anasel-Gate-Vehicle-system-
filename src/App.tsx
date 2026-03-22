@@ -48,6 +48,7 @@ import Webcam from 'react-webcam';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { QRCodeCanvas } from 'qrcode.react';
+import jsQR from 'jsqr';
 
 const MOCK_COMPANIES: Company[] = [
   { id: 'c1', name: 'SecureCorp Solutions', adminId: 'u2' },
@@ -471,46 +472,71 @@ export default function App() {
     setShowCamera(true);
   };
 
+  const decodeQRFromBase64 = (imageSrc: string): Promise<string | null> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(null);
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        resolve(code?.data || null);
+      };
+      img.onerror = () => resolve(null);
+      img.src = imageSrc;
+    });
+  };
+
   const processVehicleScan = async (imageSrc: string) => {
     if (!cameraType) return;
     setIsScanningVehicle(cameraType);
     setShowCamera(false);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-      const base64Data = imageSrc.split(',')[1];
-
-      const prompt = cameraType === 'qr' 
-        ? "Extract the vehicle details from this QR code. Return the plate number, owner name, parking number, and authorized vehicle number if available in JSON format."
-        : "Extract the license plate number from this car photo. Return only the plate number in JSON format.";
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          {
-            parts: [
-              { text: prompt },
-              { inlineData: { mimeType: "image/jpeg", data: base64Data } }
-            ]
-          }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              plateNumber: { type: Type.STRING },
-              ownerName: { type: Type.STRING },
-              parkingNumber: { type: Type.STRING },
-              vehicleNumber: { type: Type.STRING }
-            },
-            required: ["plateNumber"]
+      let plate: string | undefined;
+      let result: any = {};
+      if (cameraType === 'qr') {
+        const decoded = await decodeQRFromBase64(imageSrc);
+        if (decoded) {
+          try {
+            const parsed = JSON.parse(decoded);
+            result = parsed;
+            plate = (parsed.plate || parsed.plateNumber || '').toUpperCase();
+          } catch {
+            plate = decoded.toUpperCase();
           }
         }
-      });
-
-      const result = JSON.parse(response.text || '{}');
-      const plate = result.plateNumber?.toUpperCase();
+      } else {
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+        const base64Data = imageSrc.split(',')[1];
+        const response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: [
+            {
+              parts: [
+                { text: "Extract the license plate number from this car photo. Return only the plate number in JSON format." },
+                { inlineData: { mimeType: "image/jpeg", data: base64Data } }
+              ]
+            }
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                plateNumber: { type: Type.STRING }
+              },
+              required: ["plateNumber"]
+            }
+          }
+        });
+        const aiResult = JSON.parse(response.text || '{}');
+        plate = aiResult.plateNumber?.toUpperCase();
+      }
 
         if (plate) {
           // Find vehicle in authorized list
@@ -521,7 +547,7 @@ export default function App() {
           const action = foundVehicle?.status === 'checked-in' ? 'check-out' : 'check-in';
 
           // Check if parking slot is occupied by another vehicle (only for check-in)
-          const parkingNumber = foundVehicle?.parkingNumber || result.parkingNumber;
+          const parkingNumber = foundVehicle?.parkingNumber || result.parking;
           const occupyingVehicle = action === 'check-in' && parkingNumber ? vehicles.find(v => 
             v.parkingNumber === parkingNumber && 
             v.plateNumber !== plate && 
@@ -537,7 +563,7 @@ export default function App() {
               plateNumber: plate,
               status: 'denied',
               action: 'check-in',
-              residentName: foundVehicle?.ownerName || result.ownerName || 'Unknown Visitor',
+            residentName: foundVehicle?.ownerName || result.owner || 'Unknown Visitor',
               companyName: currentUser?.companyName || 'SecureCorp Solutions',
               guardName: currentUser?.name || 'Officer guard'
             };
@@ -589,6 +615,18 @@ export default function App() {
           const history = logs.filter(l => l.plateNumber === plate);
           setScannedLogs([newLog, ...history]);
 
+        try {
+          await fetch('/api/verify-plate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              plateNumber: plate,
+              officerName: currentUser?.username || 'Officer Johnson',
+              direction: action === 'check-in' ? 'in' : 'out',
+              residenceId: currentUser?.siteId
+            })
+          });
+        } catch {}
           // Handle navigation/state updates based on current screen
           if (currentScreen === 'dashboard') {
             navigate(foundVehicle ? 'success' : 'denied');
