@@ -391,10 +391,22 @@ export default function App() {
     return result.trim().slice(0, 9);
   };
 
+  const normalizePlate = (plate: string) => plate.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+
+  const formatPlateForDisplay = (plate: string) => {
+    const p = normalizePlate(plate);
+    if (/^T\d{3}[A-Z]{3}$/.test(p)) {
+      return `T ${p.slice(1,4)} ${p.slice(4,7)}`;
+    }
+    if (/^T\d{3}CD\d{3}$/.test(p)) {
+      return `T ${p.slice(1,4)} CD ${p.slice(7,10)}`;
+    }
+    return p;
+  };
+
   const isValidTanzanianPlate = (plate: string) => {
-    // Pattern: T 123 ABC
-    const regex = /^T\s\d{3}\s[A-Z]{3}$/;
-    return regex.test(plate);
+    const p = normalizePlate(plate);
+    return /^T\d{3}[A-Z]{3}$/.test(p) || /^T\d{3}CD\d{3}$/.test(p);
   };
   const [scanDirection, setScanDirection] = useState<'in' | 'out'>('in');
   const [exportDateRange, setExportDateRange] = useState({
@@ -585,9 +597,12 @@ export default function App() {
           try {
             const parsed = JSON.parse(decoded);
             result = parsed;
-            plate = (parsed.plate || parsed.plateNumber || '').toUpperCase();
+            const raw = (parsed.plate || parsed.plateNumber || '') as string;
+            const normalized = normalizePlate(raw);
+            plate = isValidTanzanianPlate(normalized) ? formatPlateForDisplay(normalized) : undefined;
           } catch {
-            plate = decoded.toUpperCase();
+            const normalized = normalizePlate(decoded);
+            plate = isValidTanzanianPlate(normalized) ? formatPlateForDisplay(normalized) : undefined;
           }
         }
       } else {
@@ -615,12 +630,15 @@ export default function App() {
           }
         });
         const aiResult = JSON.parse(response.text || '{}');
-        plate = aiResult.plateNumber?.toUpperCase();
+        const raw = aiResult.plateNumber || '';
+        const normalized = normalizePlate(raw);
+        plate = isValidTanzanianPlate(normalized) ? formatPlateForDisplay(normalized) : undefined;
       }
 
         if (plate) {
-          // Find vehicle in authorized list
-          const foundVehicleIndex = vehicles.findIndex(v => v.plateNumber === plate);
+        // Find vehicle in authorized list (normalize for matching)
+        const normalizedPlate = normalizePlate(plate);
+        const foundVehicleIndex = vehicles.findIndex(v => normalizePlate(v.plateNumber) === normalizedPlate);
           const foundVehicle = foundVehicleIndex !== -1 ? vehicles[foundVehicleIndex] : null;
           
           // Determine check-in/check-out action
@@ -692,7 +710,7 @@ export default function App() {
           };
 
           setLogs(prev => [newLog, ...prev]);
-          const history = logs.filter(l => l.plateNumber === plate);
+          const history = logs.filter(l => normalizePlate(l.plateNumber) === normalizedPlate);
           setScannedLogs([newLog, ...history]);
 
         try {
