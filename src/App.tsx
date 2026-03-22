@@ -341,6 +341,7 @@ export default function App() {
   const [showCamera, setShowCamera] = useState(false);
   const [cameraType, setCameraType] = useState<'qr' | 'plate' | null>(null);
   const webcamRef = useRef<Webcam>(null);
+  const qrDetectingRef = useRef(false);
   const profileCamRef = useRef<Webcam>(null);
   const [showProfileCam, setShowProfileCam] = useState<'add' | 'edit' | null>(null);
   const profilePhotoInputRef = useRef<HTMLInputElement>(null);
@@ -490,6 +491,29 @@ export default function App() {
       img.src = imageSrc;
     });
   };
+
+  useEffect(() => {
+    if (showCamera && cameraType === 'qr') {
+      qrDetectingRef.current = true;
+      const loop = async () => {
+        if (!qrDetectingRef.current) return;
+        const imageSrc = webcamRef.current?.getScreenshot();
+        if (imageSrc) {
+          const decoded = await decodeQRFromBase64(imageSrc);
+          if (decoded) {
+            qrDetectingRef.current = false;
+            await processVehicleScan(imageSrc);
+            return;
+          }
+        }
+        setTimeout(loop, 300);
+      };
+      loop();
+      return () => {
+        qrDetectingRef.current = false;
+      };
+    }
+  }, [showCamera, cameraType]);
 
   const processVehicleScan = async (imageSrc: string) => {
     if (!cameraType) return;
