@@ -13,8 +13,10 @@ export type Screen =
   | 'admin-companies'
   | 'company-sites'
   | 'company-users'
+  | 'company-residences'
   | 'site-vehicles'
   | 'authorized-list-report'
+  | 'full-recent-logs'
   | 'banned-list';
 
 export interface User {
@@ -38,9 +40,16 @@ export interface Site {
   location: string;
 }
 
+export interface Residence {
+  id: string;
+  companyId: string;
+  name: string;
+}
+
 export interface Vehicle {
   id: string;
   siteId: string;
+  companyId?: string;
   plateNumber: string;
   ownerName: string;
   parkingNumber?: string;
@@ -48,6 +57,7 @@ export interface Vehicle {
   qrCode?: string;
   status: 'checked-in' | 'checked-out';
   lastScanTime?: Date;
+  ownerPhotoUrl?: string;
 }
 
 export interface BannedUser {

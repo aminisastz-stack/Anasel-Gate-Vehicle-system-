@@ -42,10 +42,10 @@ import {
   Keyboard,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Screen, Resident, AccessLog, Stats, GuestEntry, User as AppUser, Company, Site, Vehicle, BannedUser, UserRole } from './types';
+import { Screen, Resident, AccessLog, Stats, GuestEntry, User as AppUser, Company, Site, Vehicle, BannedUser, UserRole, Residence } from './types';
 import { GoogleGenAI, Type } from "@google/genai";
 import Webcam from 'react-webcam';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { QRCodeCanvas } from 'qrcode.react';
 
@@ -248,10 +248,12 @@ export default function App() {
 
   const fetchStats = async () => {
     try {
-      const response = await fetch('/api/stats');
+      const url = currentUser?.siteId ? `/api/stats?residenceId=${currentUser.siteId}` : '/api/stats';
+      const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
-        setStats(data);
+        // System relies on local logs for accurate realtime session stats
+        // setStats(data);
       }
     } catch (err) {
       console.error('Failed to fetch stats:', err);
@@ -272,6 +274,11 @@ export default function App() {
   const [sites, setSites] = useState<Site[]>(() => {
     const saved = localStorage.getItem('app_sites');
     return saved ? JSON.parse(saved) : MOCK_SITES;
+  });
+  const [residences, setResidences] = useState<Residence[]>(() => {
+    const saved = localStorage.getItem('app_residences');
+    // Provide a default mock residence if empty
+    return saved ? JSON.parse(saved) : [{ id: 'r1', name: 'Sample Residence', companyId: 'c1' }];
   });
   const [users, setUsers] = useState<AppUser[]>(() => {
     const saved = localStorage.getItem('app_users');
@@ -303,10 +310,21 @@ export default function App() {
 
   useEffect(() => { localStorage.setItem('app_companies', JSON.stringify(companies)); }, [companies]);
   useEffect(() => { localStorage.setItem('app_sites', JSON.stringify(sites)); }, [sites]);
+  useEffect(() => { localStorage.setItem('app_residences', JSON.stringify(residences)); }, [residences]);
   useEffect(() => { localStorage.setItem('app_users', JSON.stringify(users)); }, [users]);
   useEffect(() => { localStorage.setItem('app_vehicles', JSON.stringify(vehicles)); }, [vehicles]);
   useEffect(() => { localStorage.setItem('app_banned', JSON.stringify(bannedUsers)); }, [bannedUsers]);
-  useEffect(() => { localStorage.setItem('app_logs', JSON.stringify(logs)); }, [logs]);
+  useEffect(() => { 
+    localStorage.setItem('app_logs', JSON.stringify(logs)); 
+    
+    // Calculate today's stats from logs
+    const today = new Date().toDateString();
+    const todayLogs = logs.filter(log => new Date(log.timestamp).toDateString() === today);
+    setStats({
+      entries: todayLogs.filter(log => log.status === 'granted').length,
+      denied: todayLogs.filter(log => log.status === 'denied').length
+    });
+  }, [logs]);
 
   // Guest Entry State
   const [guestData, setGuestData] = useState<GuestEntry>({
@@ -322,10 +340,14 @@ export default function App() {
   const [showCamera, setShowCamera] = useState(false);
   const [cameraType, setCameraType] = useState<'qr' | 'plate' | null>(null);
   const webcamRef = useRef<Webcam>(null);
+  const profileCamRef = useRef<Webcam>(null);
+  const [showProfileCam, setShowProfileCam] = useState<'add' | 'edit' | null>(null);
+  const profilePhotoInputRef = useRef<HTMLInputElement>(null);
+  const editProfilePhotoInputRef = useRef<HTMLInputElement>(null);
   const [faceAlert, setFaceAlert] = useState<{ name: string, reason: string } | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addModalType, setAddModalType] = useState<'company' | 'site' | 'user' | 'vehicle' | 'banned' | null>(null);
+  const [addModalType, setAddModalType] = useState<'company' | 'site' | 'residence' | 'user' | 'vehicle' | 'banned' | null>(null);
   const [newItemData, setNewItemData] = useState<any>({});
   const [manualPlate, setManualPlate] = useState('');
   const [authorizedSearchQuery, setAuthorizedSearchQuery] = useState('');
@@ -376,7 +398,8 @@ export default function App() {
     start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     end: new Date().toISOString().split('T')[0]
   });
-  const [exportCompanyFilter, setExportCompanyFilter] = useState<string>('all');
+  const [exportResidenceFilter, setExportResidenceFilter] = useState<string[]>([]);
+  const [exportSitePage, setExportSitePage] = useState(0); // Pagination for sites list in export modal
   const fileInputRef = useRef<HTMLInputElement>(null);
   const faceInputRef = useRef<HTMLInputElement>(null);
   const manualPlateInputRef = useRef<HTMLInputElement>(null);
@@ -385,7 +408,9 @@ export default function App() {
   const [selectedVehicleForQR, setSelectedVehicleForQR] = useState<Vehicle | null>(null);
   const [recentLogsPage, setRecentLogsPage] = useState(1);
   const [authorizedLogsPage, setAuthorizedLogsPage] = useState(1);
-  const logsPerPage = 10;
+  const [fullLogsPage, setFullLogsPage] = useState(1);
+  const [fullLogsPerPage, setFullLogsPerPage] = useState(10);
+  const logsPerPage = 5;
 
   const navigate = (screen: Screen) => {
     setCurrentScreen(screen);
@@ -431,7 +456,14 @@ export default function App() {
 
   const handleLogout = () => {
     setCurrentUser(null);
-    navigate('login');
+    setCurrentScreen('login');
+    setShowAddModal(false);
+    setShowExportModal(false);
+    setExportSitePage(0);
+    setShowCamera(false);
+    setShowProfileCam(null);
+    setAddModalType(null);
+    setNewItemData({});
   };
 
   const handleScanVehicle = (type: 'qr' | 'plate') => {
@@ -657,6 +689,7 @@ export default function App() {
       status: foundVehicle ? 'granted' : 'denied',
       action: action,
       residentName: vehicleToLog.ownerName,
+      siteId: vehicleToLog.siteId,
       companyName: currentUser?.companyName || 'SecureCorp Solutions',
       guardName: currentUser?.name || 'Officer guard'
     };
@@ -681,25 +714,33 @@ export default function App() {
     const filteredLogs = logs.filter(log => {
       const logDate = new Date(log.timestamp);
       const inDateRange = logDate >= startDate && logDate <= endDate;
-      const matchesCompany = exportCompanyFilter === 'all' || log.companyName === exportCompanyFilter;
-      return inDateRange && matchesCompany;
+      const matchesSite = exportResidenceFilter.length === 0 || (log.siteId && exportResidenceFilter.includes(log.siteId));
+      return inDateRange && matchesSite;
     });
 
     // Add title
-    doc.setFontSize(20);
+    doc.setFontSize(22);
     doc.setTextColor(10, 25, 49); // Deep blue
-    doc.text('Access Log Report', 14, 22);
+    doc.text('Anasel Gate System', 14, 22);
+
+    doc.setFontSize(16);
+    const adminCompanyName = companies.find(c => c.id === currentUser?.companyId)?.name || 'Security Company';
+    doc.text(adminCompanyName, 14, 30);
+    
+    doc.setFontSize(14);
+    doc.text('Vehicle Activity Report', 14, 38);
     
     doc.setFontSize(11);
     doc.setTextColor(100);
-    doc.text(`Report Period: ${exportDateRange.start} to ${exportDateRange.end}`, 14, 30);
-    if (exportCompanyFilter !== 'all') {
-      doc.text(`Company Filter: ${exportCompanyFilter}`, 14, 36);
-      doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 42);
-      doc.text(`Generated by: ${currentUser?.name} (${currentUser?.role})`, 14, 48);
+    doc.text(`Report Period: ${exportDateRange.start} to ${exportDateRange.end}`, 14, 46);
+    if (exportResidenceFilter.length > 0) {
+      const filteredSiteNames = exportResidenceFilter.map(id => sites.find(s => s.id === id)?.name || id).join(', ');
+      doc.text(`Residence Filter: ${filteredSiteNames.substring(0, 100)}${filteredSiteNames.length > 100 ? '...' : ''}`, 14, 52);
+      doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 58);
+      doc.text(`Generated by: ${currentUser?.name} (${currentUser?.role})`, 14, 64);
     } else {
-      doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 36);
-      doc.text(`Generated by: ${currentUser?.name} (${currentUser?.role})`, 14, 42);
+      doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 52);
+      doc.text(`Generated by: ${currentUser?.name} (${currentUser?.role})`, 14, 58);
     }
 
     const tableData = filteredLogs.map(log => [
@@ -707,21 +748,31 @@ export default function App() {
       log.plateNumber,
       log.residentName || 'Unknown Visitor',
       log.status.toUpperCase(),
-      log.companyName || 'N/A',
+      sites.find(s => s.id === log.siteId)?.name || log.companyName || 'N/A',
       log.guardName || 'N/A'
     ]);
 
     autoTable(doc, {
-      startY: exportCompanyFilter !== 'all' ? 55 : 50,
-      head: [['Timestamp', 'Plate Number', 'Resident/Visitor', 'Status', 'Company', 'Guard']],
+      startY: exportResidenceFilter.length > 0 ? 70 : 64,
+      head: [['Timestamp', 'Plate Number', 'Resident/Visitor', 'Status', 'Res-company', 'Guard']],
       body: tableData,
       theme: 'grid',
       headStyles: { fillColor: [10, 25, 49], textColor: [255, 255, 255] },
       alternateRowStyles: { fillColor: [245, 247, 250] },
     });
 
-    doc.save(`access-log-${exportDateRange.start}-to-${exportDateRange.end}.pdf`);
+    // Manual blob download to ensure filename and extension
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `vehicle-activity-report-${exportDateRange.start}-to-${exportDateRange.end}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     setShowExportModal(false);
+    setExportSitePage(0); // Reset site pagination
   };
 
   const processFaceImage = async (base64Data: string) => {
@@ -788,13 +839,14 @@ export default function App() {
 
   const handleManualCheck = async () => {
     if (!isOnlineRef.current) {
-        const log = { 
+        const log: AccessLog = { 
           id: `log-${Date.now()}`,
           timestamp: new Date(),
           plateNumber: searchQuery.toUpperCase(),
           status: 'granted' as const,
           action: 'check-in' as const,
           residentName: 'Unknown Resident',
+          siteId: currentUser?.siteId,
           companyName: currentUser?.companyName || 'SecureCorp Solutions',
           guardName: currentUser?.name || 'Officer guard'
         };
@@ -812,7 +864,8 @@ export default function App() {
         body: JSON.stringify({ 
           plateNumber: searchQuery.toUpperCase(),
           officerName: currentUser?.username || 'Officer Johnson',
-          direction: scanDirection
+          direction: scanDirection,
+          residenceId: currentUser?.siteId
         })
       });
       const data = await response.json();
@@ -825,6 +878,7 @@ export default function App() {
         status: data.status === 'Access Granted' ? 'granted' : 'denied',
         action: scanDirection === 'in' ? 'check-in' : 'check-out',
         residentName: data.ownerName || 'Unknown Visitor',
+        siteId: currentUser?.siteId,
         companyName: currentUser?.companyName || 'SecureCorp Solutions',
         guardName: currentUser?.name || 'Officer guard'
       };
@@ -844,13 +898,14 @@ export default function App() {
       }
     } catch (err) {
       console.error('API Error:', err);
-      const log = { 
+      const log: AccessLog = { 
         id: `log-${Date.now()}`,
         timestamp: new Date(),
         plateNumber: searchQuery.toUpperCase(),
         status: 'granted' as const,
         action: 'check-in' as const,
         residentName: 'Unknown Resident',
+        siteId: currentUser?.siteId,
         companyName: currentUser?.companyName || 'SecureCorp Solutions',
         guardName: currentUser?.name || 'Officer guard'
       };
@@ -942,11 +997,16 @@ export default function App() {
             <p className="text-white/60 font-medium">Verification System v1.0</p>
             
             <div className="flex items-center justify-center space-x-2 mt-4">
-              <div className={`w-2.5 h-2.5 rounded-full ${
-                dbStatus.status === 'connected' ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 
-                dbStatus.status === 'checking' ? 'bg-yellow-500 animate-pulse' : 
-                'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]'
-              }`} />
+              <div className="relative w-2.5 h-2.5">
+                <div className={`w-full h-full rounded-full ${
+                  dbStatus.status === 'connected' ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 
+                  dbStatus.status === 'checking' ? 'bg-yellow-500 animate-pulse' : 
+                  'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]'
+                }`} />
+                {dbStatus.status === 'checking' && (
+                  <div className="absolute inset-0 rounded-full shimmer opacity-50" />
+                )}
+              </div>
               <span className="text-xs font-medium text-white/80">
                 {dbStatus.status === 'connected' ? 'Database Connected' : 
                  dbStatus.status === 'checking' ? 'Checking Connection...' : 
@@ -993,7 +1053,7 @@ export default function App() {
             </div>
             <button 
               type="submit"
-              className="w-full bg-white text-deep-blue font-bold py-4 rounded-2xl shadow-xl hover:bg-slate-100 active:scale-[0.98] transition-all"
+              className="w-full bg-white text-[#b02029] font-black py-5 rounded-[24px] shadow-xl hover:bg-slate-50 active:scale-[0.98] transition-all uppercase tracking-widest text-sm"
             >
               Login to System
             </button>
@@ -1008,7 +1068,10 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col max-w-md mx-auto shadow-2xl relative">
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-0 md:p-12 overflow-hidden selection:bg-[#b02029]/30">
+      <div className="w-full h-full md:h-[90vh] bg-slate-50 flex flex-col max-w-md mx-auto shadow-[0_0_100px_rgba(0,0,0,0.5)] md:rounded-[48px] relative overflow-hidden border-8 border-slate-800 md:border-slate-800">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-40 h-8 bg-slate-800 rounded-b-3xl z-[100] hidden md:block" />
+
       <AnimatePresence mode="wait">
         {currentScreen === 'dashboard' && (
           <motion.div 
@@ -1022,25 +1085,28 @@ export default function App() {
               /* Guard Dashboard (New Layout) */
               <div className="flex-1 flex flex-col bg-slate-50">
                 {/* Header */}
-                <div className="bg-[#b02029] p-6 pb-12 rounded-b-[40px] shadow-lg">
-                  <div className="flex justify-between items-center mb-8">
+                <div className="bg-[#b02029] p-6 pb-12 rounded-b-[40px] shadow-[0_10px_40px_rgba(176,32,41,0.3)] relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-full shimmer opacity-10 pointer-events-none" />
+                  <div className="flex justify-between items-center mb-8 relative z-10">
                     <div className="flex items-center space-x-3">
-                      <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm">
+                      <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md border border-white/10 shadow-lg">
                         <User className="text-white w-6 h-6" />
                       </div>
                       <div>
-                        <p className="text-white/60 text-sm font-medium">Welcome back,</p>
-                        <h2 className="text-white font-bold text-lg">
+                        <p className="text-white/70 text-[10px] font-bold uppercase tracking-widest">Active Duty</p>
+                        <h2 className="text-white font-black text-xl tracking-tight">
                           Officer {currentUser?.username}
                         </h2>
                       </div>
                     </div>
-                    <button 
+                    <motion.button 
+                      whileHover={{ scale: 1.1, rotate: 5 }}
+                      whileTap={{ scale: 0.9 }}
                       onClick={handleLogout}
-                      className="p-3 bg-white/10 rounded-2xl text-white hover:bg-white/20 transition-colors"
+                      className="p-3 bg-white/10 rounded-2xl text-white hover:bg-white/20 backdrop-blur-md transition-colors border border-white/10"
                     >
                       <LogOut className="w-5 h-5" />
-                    </button>
+                    </motion.button>
                   </div>
 
                   {/* Stats Grid */}
@@ -1286,9 +1352,13 @@ export default function App() {
                             className="flex items-center space-x-2 text-[#b02029] text-sm font-bold hover:bg-red-50 px-3 py-1.5 rounded-xl transition-colors"
                           >
                             <FileDown className="w-4 h-4" />
-                            <span>Export PDF</span>
                           </button>
-                          <button className="text-[#b02029] text-sm font-bold">View All</button>
+                          <button 
+                            onClick={() => navigate('full-recent-logs')}
+                            className="p-1.5 text-[#b02029] hover:bg-red-50 rounded-xl transition-colors"
+                          >
+                            <ArrowRight className="w-5 h-5" />
+                          </button>
                         </div>
                       </div>
                       <div className="space-y-4">
@@ -1336,27 +1406,30 @@ export default function App() {
               /* Admin Dashboard (Original Layout) */
               <>
                 {/* Header */}
-                <div className="bg-deep-blue p-6 pb-12 rounded-b-[40px] shadow-lg">
-                  <div className="flex justify-between items-center mb-8">
+                <div className="bg-[#b02029] p-6 pb-12 rounded-b-[40px] shadow-[0_10px_40px_rgba(176,32,41,0.3)] relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-full shimmer opacity-10 pointer-events-none" />
+                  <div className="flex justify-between items-center mb-8 relative z-10">
                     <div className="flex items-center space-x-3">
-                      <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm">
+                      <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md border border-white/10 shadow-lg">
                         <User className="text-white w-6 h-6" />
                       </div>
                       <div>
-                        <p className="text-white/60 text-sm font-medium">Welcome back,</p>
-                        <h2 className="text-white font-bold text-lg">
+                        <p className="text-white/70 text-[10px] font-bold uppercase tracking-widest">Secure Access</p>
+                        <h2 className="text-white font-black text-xl tracking-tight">
                           {currentUser?.role === 'super-admin' ? 'Super Admin' : 
                           currentUser?.role === 'company-admin' ? 'Company Admin' :
                           currentUser?.role === 'supervisor' ? 'Site Supervisor' : 'Officer ' + currentUser?.username}
                         </h2>
                       </div>
                     </div>
-                    <button 
+                    <motion.button 
+                      whileHover={{ scale: 1.1, rotate: 5 }}
+                      whileTap={{ scale: 0.9 }}
                       onClick={handleLogout}
-                      className="p-3 bg-white/10 rounded-2xl text-white hover:bg-white/20 transition-colors"
+                      className="p-3 bg-white/10 rounded-2xl text-white hover:bg-white/20 backdrop-blur-md transition-colors border border-white/10"
                     >
                       <LogOut className="w-5 h-5" />
-                    </button>
+                    </motion.button>
                   </div>
 
                   {/* Stats Grid */}
@@ -1377,9 +1450,11 @@ export default function App() {
                   {/* Super Admin Actions */}
                   {currentUser?.role === 'super-admin' && (
                     <div className="grid grid-cols-1 gap-4">
-                      <button 
+                      <motion.div 
+                        whileHover={{ scale: 1.02, translateY: -2 }}
+                        whileTap={{ scale: 0.98 }}
                         onClick={() => navigate('admin-companies')}
-                        className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 active:scale-[0.98] transition-transform"
+                        className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
                       >
                         <div className="w-14 h-14 bg-blue-50 text-deep-blue rounded-2xl flex items-center justify-center">
                           <Building2 className="w-8 h-8" />
@@ -1388,28 +1463,32 @@ export default function App() {
                           <p className="font-bold text-slate-800">Manage Companies</p>
                           <p className="text-xs text-slate-400 font-medium">Add and manage security companies</p>
                         </div>
-                      </button>
+                      </motion.div>
                     </div>
                   )}
 
                   {/* Company Admin / Supervisor / Super Admin Actions */}
                   {(currentUser?.role === 'company-admin' || currentUser?.role === 'supervisor' || currentUser?.role === 'super-admin') && (
                     <div className="grid grid-cols-1 gap-4">
-                      <button 
+                      <motion.div 
+                        whileHover={{ scale: 1.02, translateY: -2 }}
+                        whileTap={{ scale: 0.98 }}
                         onClick={() => navigate('company-sites')}
-                        className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 active:scale-[0.98] transition-transform"
+                        className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
                       >
                         <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center">
                           <MapPin className="w-8 h-8" />
                         </div>
                         <div className="text-left">
-                          <p className="font-bold text-slate-800">Manage Sites</p>
-                          <p className="text-xs text-slate-400 font-medium">Add and configure security sites</p>
+                          <p className="font-bold text-slate-800">Manage Residence Companies</p>
+                          <p className="text-xs text-slate-400 font-medium">Add and configure residence companies</p>
                         </div>
-                      </button>
-                      <button 
+                      </motion.div>
+                      <motion.div 
+                        whileHover={{ scale: 1.02, translateY: -2 }}
+                        whileTap={{ scale: 0.98 }}
                         onClick={() => navigate('company-users')}
-                        className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 active:scale-[0.98] transition-transform"
+                        className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
                       >
                         <div className="w-14 h-14 bg-purple-50 text-purple-600 rounded-2xl flex items-center justify-center">
                           <Users className="w-8 h-8" />
@@ -1418,7 +1497,21 @@ export default function App() {
                           <p className="font-bold text-slate-800">Manage Personnel</p>
                           <p className="text-xs text-slate-400 font-medium">Add supervisors and guards</p>
                         </div>
-                      </button>
+                      </motion.div>
+                      <motion.div 
+                        whileHover={{ scale: 1.02, translateY: -2 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => navigate('company-residences')}
+                        className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
+                      >
+                        <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">
+                          <Building2 className="w-8 h-8" />
+                        </div>
+                        <div className="text-left">
+                          <p className="font-bold text-slate-800">Manage Residences</p>
+                          <p className="text-xs text-slate-400 font-medium">Add and configure residence names</p>
+                        </div>
+                      </motion.div>
                     </div>
                   )}
 
@@ -1458,28 +1551,34 @@ export default function App() {
                   {currentUser?.role === 'super-admin' && (
                     <>
                       <div className="grid grid-cols-2 gap-4">
-                        <button 
+                        <motion.div 
+                          whileHover={{ scale: 1.05, translateY: -2 }}
+                          whileTap={{ scale: 0.95 }}
                           onClick={() => handleScanVehicle('qr')}
-                          className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center space-y-3 active:scale-95 transition-transform"
+                          className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center space-y-3 cursor-pointer hover:shadow-md transition-shadow"
                         >
                           <div className="w-14 h-14 bg-blue-50 text-deep-blue rounded-2xl flex items-center justify-center">
                             <QrCode className="w-8 h-8 text-[#b02029]" />
                           </div>
                           <span className="font-bold text-slate-700">Scan QR</span>
-                        </button>
-                        <button 
+                        </motion.div>
+                        <motion.div 
+                          whileHover={{ scale: 1.05, translateY: -2 }}
+                          whileTap={{ scale: 0.95 }}
                           onClick={() => handleScanVehicle('plate')}
-                          className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center space-y-3 active:scale-95 transition-transform"
+                          className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center space-y-3 cursor-pointer hover:shadow-md transition-shadow"
                         >
                           <div className="w-14 h-14 bg-orange-50 text-orange-600 rounded-2xl flex items-center justify-center">
                             <Car className="w-8 h-8 text-[#b02029]" />
                           </div>
                           <span className="font-bold text-slate-700">Scan Plate</span>
-                        </button>
+                        </motion.div>
                       </div>
-                      <button 
+                      <motion.div 
+                        whileHover={{ scale: 1.02, translateY: -2 }}
+                        whileTap={{ scale: 0.98 }}
                         onClick={() => navigate('manual')}
-                        className="w-full bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 active:scale-[0.98] transition-transform"
+                        className="w-full bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
                       >
                         <div className="w-14 h-14 bg-slate-50 text-slate-600 rounded-2xl flex items-center justify-center">
                           <Search className="w-8 h-8 text-[#b02029]" />
@@ -1488,14 +1587,16 @@ export default function App() {
                           <p className="font-bold text-slate-800">Manual Entry</p>
                           <p className="text-xs text-slate-400 font-medium">Type plate number manually</p>
                         </div>
-                      </button>
+                      </motion.div>
 
-                      <button 
+                      <motion.div 
+                        whileHover={{ scale: 1.02, translateY: -2 }}
+                        whileTap={{ scale: 0.98 }}
                         onClick={() => {
                           setGuestData({ name: '', idType: '', idNumber: '', purpose: '', plateNumber: '' });
                           navigate('guest-entry');
                         }}
-                        className="w-full bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 active:scale-[0.98] transition-transform"
+                        className="w-full bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
                       >
                         <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">
                           <UserPlus className="w-8 h-8 text-[#b02029]" />
@@ -1504,7 +1605,7 @@ export default function App() {
                           <p className="font-bold text-slate-800">Guest Entry</p>
                           <p className="text-xs text-slate-400 font-medium">Register visitor with Face Recognition</p>
                         </div>
-                      </button>
+                      </motion.div>
                     </>
                   )}
 
@@ -1553,9 +1654,13 @@ export default function App() {
                             className="flex items-center space-x-2 text-deep-blue text-sm font-bold hover:bg-blue-50 px-3 py-1.5 rounded-xl transition-colors"
                           >
                             <FileDown className="w-4 h-4 text-[#b02029]" />
-                            <span>Export PDF</span>
                           </button>
-                          <button className="text-deep-blue text-sm font-bold">View All</button>
+                          <button 
+                            onClick={() => navigate('full-recent-logs')}
+                            className="p-1.5 text-deep-blue hover:bg-blue-50 rounded-xl transition-colors"
+                          >
+                            <ArrowRight className="w-5 h-5" />
+                          </button>
                         </div>
                       </div>
 
@@ -1586,7 +1691,7 @@ export default function App() {
                                 </p>
                                 {currentUser?.role === 'super-admin' && (
                                   <p className="text-[10px] text-deep-blue font-semibold mt-1">
-                                    {log.companyName} • {log.guardName}
+                                    {sites.find(s => s.id === log.siteId)?.name || log.companyName} • {log.guardName}
                                   </p>
                                 )}
                               </div>
@@ -1882,6 +1987,7 @@ export default function App() {
                       status: 'granted',
                       action: 'check-in',
                       residentName: guestData.name,
+                      siteId: currentUser?.siteId,
                       companyName: currentUser?.companyName || 'SecureCorp Solutions',
                       guardName: currentUser?.name || 'Officer guard',
                       guestDetails: {
@@ -1942,8 +2048,8 @@ export default function App() {
                       <p className="font-bold text-slate-800">{company.name}</p>
                       <p className="text-xs text-slate-400 font-medium">ID: {company.id}</p>
                       <div className="mt-2 space-y-1">
-                        <p className="text-[10px] text-deep-blue font-semibold">
-                          Sites: {sites.filter(s => s.companyId === company.id).length}
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-4">
+                          Residence Companies: {sites.filter(s => s.companyId === company.id).length}
                         </p>
                         <p className="text-[10px] text-indigo-600 font-semibold">
                           Supervisors: {users.filter(u => u.companyId === company.id && u.role === 'supervisor').map(u => u.username).join(', ') || 'None'}
@@ -1974,7 +2080,7 @@ export default function App() {
                   <button onClick={() => navigate('dashboard')} className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white">
                     <ChevronLeft className="w-5 h-5" />
                   </button>
-                  <h2 className="text-white font-bold text-xl">Sites</h2>
+                  <h2 className="text-white font-bold text-xl">Residence Companies</h2>
                 </div>
                 <button 
                   onClick={() => {
@@ -2001,6 +2107,59 @@ export default function App() {
                       {(currentUser?.role === 'super-admin' || currentUser?.role === 'company-admin') && (
                         <p className="text-[10px] text-deep-blue font-semibold mt-1">
                           {companies.find(c => c.id === site.companyId)?.name}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <button className="p-2 text-slate-400 hover:text-red-500">
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+        {currentScreen === 'company-residences' && (
+          <motion.div 
+            key="company-residences"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            className="flex-1 bg-slate-50 flex flex-col"
+          >
+            <div className="bg-deep-blue p-6 pb-8 rounded-b-[40px] shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center space-x-4">
+                  <button onClick={() => navigate('dashboard')} className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white">
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <h2 className="text-white font-bold text-xl">Residence Names</h2>
+                </div>
+                <button 
+                  onClick={() => {
+                    setAddModalType('residence');
+                    setNewItemData({ name: '', companyId: currentUser?.companyId || 'c1' });
+                    setShowAddModal(true);
+                  }}
+                  className="p-3 bg-white/20 text-white rounded-2xl"
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="p-6 space-y-4 flex-1 overflow-y-auto">
+              {residences.filter(r => isAuthorized({ companyId: r.companyId } as any, 'site')).map(residence => (
+                <div key={residence.id} className="bg-white p-5 rounded-[32px] shadow-sm border border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center space-x-4">
+                    <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
+                      <Building2 className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-slate-800">{residence.name}</p>
+                      {(currentUser?.role === 'super-admin' || currentUser?.role === 'company-admin') && (
+                        <p className="text-[10px] text-deep-blue font-semibold mt-1">
+                          {companies.find(c => c.id === residence.companyId)?.name}
                         </p>
                       )}
                     </div>
@@ -2384,7 +2543,7 @@ export default function App() {
                                 <p className="font-bold text-slate-800 text-sm">{log.timestamp.toLocaleDateString()} • {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                                 {(currentUser?.role === 'super-admin' || currentUser?.role === 'company-admin' || currentUser?.role === 'supervisor') && (
                                   <p className="text-[10px] text-deep-blue font-semibold mt-1">
-                                    {log.companyName} • {log.guardName}
+                                    {sites.find(s => s.id === log.siteId)?.name || log.companyName} • {log.guardName}
                                   </p>
                                 )}
                               </div>
@@ -2426,9 +2585,13 @@ export default function App() {
                       className="flex items-center space-x-2 text-deep-blue text-sm font-bold hover:bg-blue-50 px-3 py-1.5 rounded-xl transition-colors"
                     >
                       <FileDown className="w-4 h-4" />
-                      <span>Export PDF</span>
                     </button>
-                    <button className="text-deep-blue text-sm font-bold">View All</button>
+                    <button 
+                      onClick={() => navigate('full-recent-logs')}
+                      className="p-1.5 text-deep-blue hover:bg-blue-50 rounded-xl transition-colors"
+                    >
+                      <ArrowRight className="w-5 h-5" />
+                    </button>
                   </div>
                 </div>
                 <div className="space-y-4">
@@ -2457,7 +2620,7 @@ export default function App() {
                             )}
                           </p>
                           <p className="text-[10px] text-deep-blue font-semibold mt-1">
-                            {log.companyName} • {log.guardName}
+                            {sites.find(s => s.id === log.siteId)?.name || log.companyName} • {log.guardName}
                           </p>
                         </div>
                       </div>
@@ -2576,8 +2739,14 @@ export default function App() {
                 >
                   {/* Top Section: Icon, Plate & Badge */}
                   <div className="flex items-start gap-4">
-                    <div className="w-14 h-14 bg-orange-50 text-orange-500 rounded-2xl flex items-center justify-center shrink-0">
-                      <Car className="w-7 h-7" />
+                    <div className="w-14 h-14 rounded-2xl overflow-hidden bg-slate-800 flex items-center justify-center shrink-0 border border-slate-100">
+                      {vehicle.ownerPhotoUrl ? (
+                        <img src={vehicle.ownerPhotoUrl} alt={vehicle.ownerName} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-8 h-8 bg-slate-600 rounded-full flex items-center justify-center">
+                          <User className="w-5 h-5 text-slate-300" />
+                        </div>
+                      )}
                     </div>
                     
                     <div className="flex-1 min-w-0">
@@ -2897,15 +3066,20 @@ export default function App() {
                   className="w-full bg-white rounded-[40px] p-8 shadow-2xl space-y-6"
                 >
                   <div className="flex items-center space-x-6">
-                    <img 
-                      src={MOCK_RESIDENT.photoUrl} 
-                      alt="Resident" 
-                      className="w-24 h-24 rounded-3xl object-cover border-4 border-slate-50"
-                      referrerPolicy="no-referrer"
-                    />
+                    <div className="w-24 h-24 rounded-3xl border-4 border-slate-50 overflow-hidden bg-slate-800 flex items-center justify-center flex-shrink-0">
+                      {scannedVehicle?.ownerPhotoUrl ? (
+                        <img src={scannedVehicle.ownerPhotoUrl} alt="Owner" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="flex flex-col items-center justify-center space-y-1 w-full h-full">
+                          <div className="w-10 h-10 bg-slate-600 rounded-full flex items-center justify-center">
+                            <User className="w-6 h-6 text-slate-300" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     <div className="space-y-1">
                       <p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Resident Name</p>
-                      <h3 className="text-xl font-bold text-slate-800">{verifiedResident?.name || MOCK_RESIDENT.name}</h3>
+                      <h3 className="text-xl font-bold text-slate-800">{verifiedResident?.name || scannedVehicle?.ownerName || MOCK_RESIDENT.name}</h3>
                       <div className="inline-flex items-center px-3 py-1 bg-blue-50 text-deep-blue rounded-lg text-xs font-bold">
                         Verified Member
                       </div>
@@ -3115,6 +3289,86 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Profile Photo Camera Modal */}
+      <AnimatePresence>
+        {showProfileCam && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowProfileCam(null)}
+              className="absolute inset-0 bg-slate-900/90 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-sm rounded-[40px] shadow-2xl z-10 overflow-hidden flex flex-col"
+            >
+              <div className="bg-deep-blue p-6 text-white flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-black uppercase tracking-tight">Take Profile Photo</h3>
+                  <p className="text-white/60 text-xs font-medium">Position face within the square frame</p>
+                </div>
+                <button
+                  onClick={() => setShowProfileCam(null)}
+                  className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center hover:bg-white/20 transition-colors"
+                >
+                  <XCircle className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="relative bg-black flex items-center justify-center overflow-hidden" style={{ aspectRatio: '1/1' }}>
+                <Webcam
+                  audio={false}
+                  ref={profileCamRef}
+                  screenshotFormat="image/jpeg"
+                  videoConstraints={{ facingMode: 'user', width: 480, height: 480 }}
+                  mirrored={true}
+                  screenshotQuality={0.92}
+                  disablePictureInPicture={true}
+                  forceScreenshotSourceSize={false}
+                  imageSmoothing={true}
+                  onUserMedia={() => {}}
+                  onUserMediaError={() => {}}
+                  className="w-full h-full object-cover"
+                />
+                {/* Square crop guide overlay */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="w-56 h-56 border-2 border-white/60 rounded-2xl relative">
+                    <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-white -mt-1 -ml-1 rounded-tl-lg" />
+                    <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-white -mt-1 -mr-1 rounded-tr-lg" />
+                    <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-white -mb-1 -ml-1 rounded-bl-lg" />
+                    <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-white -mb-1 -mr-1 rounded-br-lg" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-8 bg-slate-50 flex flex-col items-center">
+                <button
+                  onClick={() => {
+                    const imageSrc = profileCamRef.current?.getScreenshot();
+                    if (imageSrc) {
+                      if (showProfileCam === 'add') {
+                        setNewItemData(prev => ({...prev, ownerPhotoUrl: imageSrc}));
+                      } else if (showProfileCam === 'edit' && editingVehicle) {
+                        setEditingVehicle(prev => prev ? {...prev, ownerPhotoUrl: imageSrc} : prev);
+                      }
+                      setShowProfileCam(null);
+                    }
+                  }}
+                  className="w-20 h-20 bg-deep-blue rounded-full flex items-center justify-center text-white shadow-xl active:scale-90 transition-all hover:bg-deep-blue/90"
+                >
+                  <Camera className="w-10 h-10" />
+                </button>
+                <p className="mt-4 text-slate-400 font-bold text-[10px] uppercase tracking-widest">Tap to Capture Photo</p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Add Item Modal */}
       <AnimatePresence>
         {showAddModal && (
@@ -3124,7 +3378,7 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowAddModal(false)}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-md"
             />
             <motion.div 
               initial={{ y: '100%' }}
@@ -3132,9 +3386,14 @@ export default function App() {
               exit={{ y: '100%' }}
               className="bg-white w-full max-w-sm rounded-t-[40px] sm:rounded-[40px] shadow-2xl z-10 overflow-hidden flex flex-col"
             >
-              <div className="bg-deep-blue p-8 text-white text-center">
-                <h3 className="text-2xl font-black uppercase tracking-tight">Add New {addModalType}</h3>
-                <p className="text-white/60 text-sm font-medium">Enter details below</p>
+              <div className="bg-[#b02029] p-8 text-white text-center relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-full shimmer opacity-10 pointer-events-none" />
+                <h3 className="text-2xl font-black uppercase tracking-tight relative z-10">
+                  {addModalType === 'site' ? 'New Residence Co' : 
+                   addModalType === 'residence' ? 'New Residence' : 
+                   'Add New ' + addModalType}
+                </h3>
+                <p className="text-white/60 text-xs font-bold uppercase tracking-widest mt-1 relative z-10">Secure Entry Protocol</p>
               </div>
               
               <div className="p-8 space-y-4">
@@ -3153,10 +3412,25 @@ export default function App() {
                   </div>
                 )}
 
+                {addModalType === 'residence' && (
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Residence Name</label>
+                      <input 
+                        type="text" 
+                        value={newItemData.name}
+                        onChange={(e) => setNewItemData({...newItemData, name: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-4 text-slate-900 focus:ring-2 focus:ring-deep-blue/20 transition-all"
+                        placeholder="e.g. Green Valley Estate"
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {addModalType === 'site' && (
                   <div className="space-y-4">
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Site Name</label>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Company Name</label>
                       <input 
                         type="text" 
                         value={newItemData.name}
@@ -3166,14 +3440,19 @@ export default function App() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Location</label>
-                      <input 
-                        type="text" 
-                        value={newItemData.location}
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Select Residence Name</label>
+                      <select 
+                        value={newItemData.location || ''}
                         onChange={(e) => setNewItemData({...newItemData, location: e.target.value})}
                         className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-4 text-slate-900 focus:ring-2 focus:ring-deep-blue/20 transition-all"
-                        placeholder="e.g. 123 Main St"
-                      />
+                      >
+                        <option value="">Select a residence</option>
+                        {residences
+                          .filter(r => currentUser?.role === 'super-admin' ? r.companyId === newItemData.companyId : r.companyId === currentUser?.companyId)
+                          .map(r => (
+                          <option key={r.id} value={r.name}>{r.name}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 )}
@@ -3232,6 +3511,82 @@ export default function App() {
 
                 {addModalType === 'vehicle' && (
                   <div className="space-y-4">
+                    {/* Owner Profile Photo */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Owner Profile Photo</label>
+                      <div className="flex flex-col items-center space-y-3">
+                        {/* Square photo preview */}
+                        <div className="w-28 h-28 rounded-2xl overflow-hidden bg-slate-800 flex items-center justify-center border-2 border-slate-200 shadow-inner relative group">
+                          {newItemData.ownerPhotoUrl ? (
+                            <img src={newItemData.ownerPhotoUrl} alt="Owner" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="flex flex-col items-center justify-center space-y-1">
+                              <div className="w-12 h-12 bg-slate-600 rounded-full flex items-center justify-center">
+                                <User className="w-7 h-7 text-slate-300" />
+                              </div>
+                              <span className="text-slate-500 text-[9px] font-bold uppercase tracking-wider">No Photo</span>
+                            </div>
+                          )}
+                          {newItemData.ownerPhotoUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setNewItemData({...newItemData, ownerPhotoUrl: ''})}
+                              className="absolute top-1 right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <XCircle className="w-3 h-3 text-white" />
+                            </button>
+                          )}
+                        </div>
+                        {/* Action buttons */}
+                        <div className="flex space-x-2 w-full">
+                          <input
+                            ref={profilePhotoInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const reader = new FileReader();
+                                reader.onload = (ev) => setNewItemData({...newItemData, ownerPhotoUrl: ev.target?.result as string});
+                                reader.readAsDataURL(file);
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => profilePhotoInputRef.current?.click()}
+                            className="flex-1 flex items-center justify-center space-x-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-3 rounded-xl transition-colors"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>Upload</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowProfileCam('add')}
+                            className="flex-1 flex items-center justify-center space-x-1.5 bg-deep-blue hover:bg-deep-blue/90 text-white font-bold text-xs py-3 rounded-xl transition-colors"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                            <span>Camera</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Select Company Resident</label>
+                      <select 
+                        value={newItemData.companyId || ''}
+                        onChange={(e) => setNewItemData({...newItemData, companyId: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-4 text-slate-900 focus:ring-2 focus:ring-deep-blue/20 transition-all"
+                      >
+                        <option value="">No Residence Company</option>
+                        {sites.map(s => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Authorized Vehicle Number</label>
                       <input 
@@ -3338,11 +3693,16 @@ export default function App() {
                 )}
 
                 <div className="pt-4 space-y-3">
-                  <button 
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                     onClick={() => {
                     if (addModalType === 'company') {
                         const newCompany: Company = { id: `c${companies.length + 1}`, name: newItemData.name, adminId: 'u1' };
                         setCompanies([...companies, newCompany]);
+                      } else if (addModalType as any === 'residence') {
+                        const newResidence: Residence = { id: `r${residences.length + 1}`, companyId: newItemData.companyId, name: newItemData.name };
+                        setResidences([...residences, newResidence]);
                       } else if (addModalType === 'site') {
                         const newSite: Site = { id: `s${sites.length + 1}`, companyId: newItemData.companyId, name: newItemData.name, location: newItemData.location };
                         setSites([...sites, newSite]);
@@ -3358,13 +3718,15 @@ export default function App() {
                       } else if (addModalType === 'vehicle') {
                         const newVehicle: Vehicle = { 
                           id: `v${vehicles.length + 1}`, 
+                          companyId: newItemData.companyId,
                           plateNumber: newItemData.plateNumber, 
                           ownerName: newItemData.ownerName, 
                           siteId: newItemData.siteId || currentUser?.siteId || 's1',
                           parkingNumber: newItemData.parkingNumber,
                           vehicleNumber: newItemData.vehicleNumber,
                           qrCode: `QR-${newItemData.plateNumber}`,
-                          status: 'checked-out'
+                          status: 'checked-out',
+                          ownerPhotoUrl: newItemData.ownerPhotoUrl || undefined
                         };
                         setVehicles([...vehicles, newVehicle]);
                       } else if (addModalType === 'banned') {
@@ -3373,16 +3735,18 @@ export default function App() {
                       }
                       setShowAddModal(false);
                     }}
-                    className="w-full bg-deep-blue text-white font-bold py-5 rounded-[24px] shadow-xl active:scale-[0.98] transition-all"
+                    className="w-full bg-[#b02029] text-white font-bold py-5 rounded-[24px] shadow-lg shadow-red-900/20 active:scale-[0.98] transition-all"
                   >
-                    Save {addModalType}
-                  </button>
-                  <button 
+                    Save {addModalType === 'site' ? 'Residence Company' : addModalType === 'residence' ? 'Residence Name' : addModalType}
+                  </motion.button>
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                     onClick={() => setShowAddModal(false)}
                     className="w-full bg-slate-100 text-slate-600 font-bold py-5 rounded-[24px] active:scale-[0.98] transition-all"
                   >
                     Cancel
-                  </button>
+                  </motion.button>
                 </div>
               </div>
             </motion.div>
@@ -3407,12 +3771,91 @@ export default function App() {
               exit={{ y: '100%' }}
               className="bg-white w-full max-w-sm rounded-t-[40px] sm:rounded-[40px] shadow-2xl z-10 overflow-hidden flex flex-col"
             >
-              <div className="bg-deep-blue p-8 text-white text-center">
-                <h3 className="text-2xl font-black uppercase tracking-tight">Edit Vehicle</h3>
-                <p className="text-white/60 text-sm font-medium">Update vehicle details</p>
+              <div className="bg-[#b02029] p-8 text-white text-center relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-full shimmer opacity-10 pointer-events-none" />
+                <h3 className="text-2xl font-black uppercase tracking-tight relative z-10">Edit Vehicle</h3>
+                <p className="text-white/60 text-xs font-bold uppercase tracking-widest mt-1 relative z-10">ID: {editingVehicle?.id}</p>
               </div>
               
               <div className="p-8 space-y-4">
+                {/* Owner Profile Photo (Edit) */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Owner Profile Photo</label>
+                  <div className="flex flex-col items-center space-y-3">
+                    <div className="w-28 h-28 rounded-2xl overflow-hidden bg-slate-800 flex items-center justify-center border-2 border-slate-200 shadow-inner relative group">
+                      {editingVehicle.ownerPhotoUrl ? (
+                        <img src={editingVehicle.ownerPhotoUrl} alt="Owner" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="flex flex-col items-center justify-center space-y-1">
+                          <div className="w-12 h-12 bg-slate-600 rounded-full flex items-center justify-center">
+                            <User className="w-7 h-7 text-slate-300" />
+                          </div>
+                          <span className="text-slate-500 text-[9px] font-bold uppercase tracking-wider">No Photo</span>
+                        </div>
+                      )}
+                      {editingVehicle.ownerPhotoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setEditingVehicle({...editingVehicle, ownerPhotoUrl: ''})}
+                          className="absolute top-1 right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <XCircle className="w-3 h-3 text-white" />
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex space-x-2 w-full">
+                      <input
+                        ref={editProfilePhotoInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (ev) => setEditingVehicle({...editingVehicle, ownerPhotoUrl: ev.target?.result as string});
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        type="button"
+                        onClick={() => editProfilePhotoInputRef.current?.click()}
+                        className="flex-1 flex items-center justify-center space-x-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-3 rounded-xl transition-colors"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload</span>
+                      </motion.button>
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        type="button"
+                        onClick={() => setShowProfileCam('edit')}
+                        className="flex-1 flex items-center justify-center space-x-1.5 bg-[#b02029] hover:bg-[#901a21] text-white font-bold text-xs py-3 rounded-xl transition-all shadow-sm"
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Camera</span>
+                      </motion.button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Select Company Resident</label>
+                  <select 
+                    value={editingVehicle.companyId || ''}
+                    onChange={(e) => setEditingVehicle({...editingVehicle, companyId: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 px-4 text-slate-900 focus:ring-2 focus:ring-deep-blue/20 transition-all"
+                  >
+                    <option value="">No Residence Company</option>
+                    {sites.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-1">Authorized Vehicle Number</label>
                   <input 
@@ -3455,21 +3898,25 @@ export default function App() {
                 </div>
 
                 <div className="pt-4 space-y-3">
-                  <button 
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                     onClick={() => {
                       setVehicles(prev => prev.map(v => v.id === editingVehicle.id ? editingVehicle : v));
                       setShowEditVehicleModal(false);
                     }}
-                    className="w-full bg-deep-blue text-white font-bold py-5 rounded-[24px] shadow-xl active:scale-[0.98] transition-all"
+                    className="w-full bg-[#b02029] text-white font-bold py-5 rounded-[24px] shadow-lg shadow-red-900/20 active:scale-[0.98] transition-all"
                   >
                     Save Changes
-                  </button>
-                  <button 
+                  </motion.button>
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                     onClick={() => setShowEditVehicleModal(false)}
                     className="w-full bg-slate-100 text-slate-600 font-bold py-5 rounded-[24px] active:scale-[0.98] transition-all"
                   >
                     Cancel
-                  </button>
+                  </motion.button>
                 </div>
               </div>
             </motion.div>
@@ -3612,8 +4059,8 @@ export default function App() {
                       <Building2 className="w-5 h-5 text-deep-blue" />
                     </div>
                     <div>
-                      <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Security Company</p>
-                      <p className="font-bold text-slate-800">{selectedLog.companyName}</p>
+                      <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Authorized Vehicle Number</p>
+                      <p className="font-bold text-slate-800">{vehicles.find(v => v.plateNumber === selectedLog.plateNumber)?.vehicleNumber || 'N/A'}</p>
                     </div>
                   </div>
 
@@ -3639,6 +4086,153 @@ export default function App() {
           </div>
         )}
 
+        {currentScreen === 'full-recent-logs' && (
+          <motion.div 
+            key="full-recent-logs"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            className="flex-1 bg-slate-50 flex flex-col"
+          >
+            <div className="bg-deep-blue p-6 pb-12 rounded-b-[40px] shadow-lg">
+              <div className="flex items-center space-x-4">
+                <button 
+                  onClick={() => navigate('dashboard')} 
+                  className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <h2 className="text-white font-bold text-xl">Full Recent Logs</h2>
+              </div>
+            </div>
+
+            <div className="p-4 -mt-8 space-y-4 flex-1 overflow-y-auto pb-20">
+              <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100">
+                <div className="space-y-4">
+                  {logs
+                    .slice((fullLogsPage - 1) * fullLogsPerPage, fullLogsPage * fullLogsPerPage)
+                    .map((log) => (
+                    <div 
+                      key={log.id} 
+                      onClick={() => setSelectedLog(log)}
+                      className="flex items-center justify-between p-3 rounded-2xl hover:bg-slate-50 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center space-x-4">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                          log.status === 'granted' ? 'bg-green-50 text-success-green' : 'bg-red-50 text-error-red'
+                        }`}>
+                          {log.status === 'granted' ? <CheckCircle2 className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
+                        </div>
+                        <div>
+                          <p className="font-bold text-slate-800">{log.plateNumber}</p>
+                          <p className="text-xs text-slate-400 font-medium">
+                            {log.residentName || 'Unknown Visitor'} • {log.timestamp.toLocaleDateString()} {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {log.action && (
+                              <span className={`ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
+                                log.action === 'check-in' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+                              }`}>
+                                {log.action === 'check-in' ? 'In' : 'Out'}
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-[10px] text-deep-blue font-semibold mt-1">
+                            {sites.find(s => s.id === log.siteId)?.name || log.companyName} • {log.guardName}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                          log.status === 'granted' ? 'bg-green-100 text-success-green' : 'bg-red-100 text-error-red'
+                        }`}>
+                          {log.status === 'granted' ? 'Passed' : 'Denied'}
+                        </div>
+                        <Settings className="w-4 h-4 text-slate-400" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Pagination and Filter Controls */}
+                <div className="mt-8 pt-8 border-t border-slate-100 space-y-6">
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Show:</span>
+                      <div className="flex bg-slate-50 p-1 rounded-xl">
+                        {[5, 10, 20, 30, 50].map((num) => (
+                          <button
+                            key={num}
+                            onClick={() => {
+                              setFullLogsPerPage(num);
+                              setFullLogsPage(1);
+                            }}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                              fullLogsPerPage === num 
+                                ? 'bg-white text-deep-blue shadow-sm' 
+                                : 'text-slate-400 hover:text-slate-600'
+                            }`}
+                          >
+                            {num}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => setShowExportModal(true)}
+                      className="flex items-center space-x-2 bg-[#b02029] text-white px-6 py-3 rounded-2xl font-bold text-sm shadow-lg shadow-red-900/20 active:scale-95 transition-all"
+                    >
+                      <FileDown className="w-4 h-4" />
+                      <span>Export PDF Report</span>
+                    </button>
+                  </div>
+
+                  {logs.length > fullLogsPerPage && (
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-slate-400 font-medium">
+                        Showing {((fullLogsPage - 1) * fullLogsPerPage) + 1} to {Math.min(fullLogsPage * fullLogsPerPage, logs.length)} of {logs.length} entries
+                      </p>
+                      <div className="flex items-center space-x-2">
+                        <button 
+                          onClick={() => setFullLogsPage(prev => Math.max(prev - 1, 1))}
+                          disabled={fullLogsPage === 1}
+                          className="w-10 h-10 flex items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                        >
+                          <ChevronLeft className="w-5 h-5" />
+                        </button>
+                        <div className="flex items-center space-x-1">
+                          {Array.from({ length: Math.min(5, Math.ceil(logs.length / fullLogsPerPage)) }).map((_, i) => {
+                            const pageNum = i + 1;
+                            return (
+                              <button
+                                key={i}
+                                onClick={() => setFullLogsPage(pageNum)}
+                                className={`w-10 h-10 flex items-center justify-center rounded-xl text-sm font-bold transition-all ${
+                                  fullLogsPage === pageNum 
+                                    ? 'bg-deep-blue text-white shadow-md' 
+                                    : 'text-slate-400 hover:bg-slate-50'
+                                }`}
+                              >
+                                {pageNum}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <button 
+                          onClick={() => setFullLogsPage(prev => Math.min(prev + 1, Math.ceil(logs.length / fullLogsPerPage)))}
+                          disabled={fullLogsPage === Math.ceil(logs.length / fullLogsPerPage)}
+                          className="w-10 h-10 flex items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                        >
+                          <ChevronRight className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {showExportModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
             <motion.div 
@@ -3654,12 +4248,13 @@ export default function App() {
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
               className="bg-white w-full max-w-sm rounded-[40px] shadow-2xl z-10 overflow-hidden"
             >
-              <div className="bg-deep-blue p-8 text-white text-center relative">
-                <div className="w-16 h-16 mx-auto bg-white/10 rounded-2xl flex items-center justify-center mb-4">
+              <div className="bg-[#b02029] p-8 text-white text-center relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-full shimmer opacity-10 pointer-events-none" />
+                <div className="w-16 h-16 mx-auto bg-white/10 rounded-2xl flex items-center justify-center mb-4 backdrop-blur-md border border-white/10 relative z-10">
                   <Calendar className="w-8 h-8 text-white" />
                 </div>
-                <h3 className="text-2xl font-bold">Export Report</h3>
-                <p className="text-white/60 text-sm">Select date range for the log report</p>
+                <h3 className="text-2xl font-black uppercase tracking-tight relative z-10">Vehicle Activity Report</h3>
+                <p className="text-white/60 text-xs font-bold uppercase tracking-widest mt-1 relative z-10">Secure Data Retrieval</p>
               </div>
 
               <div className="p-8 space-y-6">
@@ -3683,39 +4278,84 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">Security Company</label>
-                    <select 
-                      value={exportCompanyFilter}
-                      onChange={(e) => setExportCompanyFilter(e.target.value)}
-                      className="w-full bg-slate-50 border-none rounded-2xl p-4 font-bold text-slate-800 focus:ring-2 focus:ring-deep-blue transition-all"
-                    >
-                      <option value="all">All Companies</option>
-                      {companies.map(company => (
-                        <option key={company.id} value={company.name}>{company.name}</option>
-                      ))}
-                    </select>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Residence Company List</label>
+                      {sites.length > 5 && (
+                        <div className="flex items-center space-x-2">
+                          <button 
+                            onClick={() => setExportSitePage(prev => Math.max(0, prev - 1))}
+                            disabled={exportSitePage === 0}
+                            className="p-1 rounded-lg bg-slate-100 text-slate-400 disabled:opacity-30 hover:bg-slate-200 transition-all"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          <span className="text-[10px] font-black text-slate-400">
+                            {exportSitePage + 1} / {Math.ceil(sites.length / 5)}
+                          </span>
+                          <button 
+                            onClick={() => setExportSitePage(prev => Math.min(Math.ceil(sites.length / 5) - 1, prev + 1))}
+                            disabled={exportSitePage >= Math.ceil(sites.length / 5) - 1}
+                            className="p-1 rounded-lg bg-slate-100 text-slate-400 disabled:opacity-30 hover:bg-slate-200 transition-all"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="w-full bg-slate-50 border-none rounded-2xl p-4 space-y-2">
+                      {sites.length === 0 ? (
+                        <p className="text-sm font-bold text-slate-400 italic">No residence companies found</p>
+                      ) : (
+                        sites.slice(exportSitePage * 5, (exportSitePage * 5) + 5).map(site => (
+                          <label key={site.id} className="flex items-center space-x-3 cursor-pointer p-2 hover:bg-white rounded-xl transition-colors">
+                            <input 
+                              type="checkbox"
+                              checked={exportResidenceFilter.includes(site.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setExportResidenceFilter(prev => [...prev, site.id]);
+                                } else {
+                                  setExportResidenceFilter(prev => prev.filter(id => id !== site.id));
+                                }
+                              }}
+                              className="w-5 h-5 rounded border-slate-300 text-deep-blue focus:ring-deep-blue"
+                            />
+                            <span className="font-bold text-slate-800">{site.name}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-2">Check boxes to include them in the report. Leave all unselected for all.</p>
                   </div>
                 </div>
 
                 <div className="flex space-x-3">
-                  <button 
-                    onClick={() => setShowExportModal(false)}
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      setShowExportModal(false);
+                      setExportSitePage(0);
+                    }}
                     className="flex-1 bg-slate-100 text-slate-600 font-bold py-4 rounded-2xl hover:bg-slate-200 transition-colors"
                   >
                     Cancel
-                  </button>
-                  <button 
+                  </motion.button>
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                     onClick={handleExportPDF}
-                    className="flex-1 bg-deep-blue text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-900/20 active:scale-[0.98] transition-all"
+                    className="flex-1 bg-[#b02029] text-white font-bold py-4 rounded-2xl shadow-lg shadow-red-900/20 active:scale-[0.98] transition-all"
                   >
-                    Export
-                  </button>
+                    Generate Report
+                  </motion.button>
                 </div>
               </div>
             </motion.div>
           </div>
         )}
-      </AnimatePresence>
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

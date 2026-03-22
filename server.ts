@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import pkg from 'pg';
@@ -40,6 +41,7 @@ async function setupDB() {
         officer_name VARCHAR(255),
         direction VARCHAR(10) DEFAULT 'in',
         parking_number VARCHAR(50),
+        residence_id VARCHAR(50),
         log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -49,7 +51,18 @@ async function setupDB() {
       CREATE TABLE IF NOT EXISTS registered_vehicles (
         plate_number VARCHAR(255) PRIMARY KEY,
         owner_name VARCHAR(255),
-        parking_number VARCHAR(50)
+        parking_number VARCHAR(50),
+        residence_id VARCHAR(50)
+      );
+    `);
+
+    // Residences Table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS residences (
+        id VARCHAR(50) PRIMARY KEY,
+        name VARCHAR(255),
+        location VARCHAR(255),
+        company_id VARCHAR(50)
       );
     `);
 
@@ -59,20 +72,28 @@ async function setupDB() {
         parking_number VARCHAR(50) PRIMARY KEY,
         is_occupied BOOLEAN DEFAULT FALSE,
         occupied_by_plate VARCHAR(255),
+        residence_id VARCHAR(50),
         last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
+    // Insert mock residences if empty
+    const resCount = await pool.query('SELECT COUNT(*) FROM residences');
+    if (parseInt(resCount.rows[0].count) === 0) {
+      await pool.query("INSERT INTO residences (id, name, location, company_id) VALUES ('s1', 'North Gate Residential', '123 North St', 'c1')");
+      await pool.query("INSERT INTO residences (id, name, location, company_id) VALUES ('s2', 'Industrial Park West', '456 West Ave', 'c1')");
+    }
+
     // Insert a mock registered vehicle if the table is empty
     const countRes = await pool.query('SELECT COUNT(*) FROM registered_vehicles');
     if (parseInt(countRes.rows[0].count) === 0) {
-      await pool.query("INSERT INTO registered_vehicles (plate_number, owner_name, parking_number) VALUES ('T 122 ABB', 'John Doe', 'P-101')");
-      await pool.query("INSERT INTO registered_vehicles (plate_number, owner_name, parking_number) VALUES ('T 456 DEF', 'Jane Smith', 'P-102')");
-      await pool.query("INSERT INTO registered_vehicles (plate_number, owner_name, parking_number) VALUES ('T 789 GHI', 'Robert Johnson', 'P-101')"); // Shared parking
+      await pool.query("INSERT INTO registered_vehicles (plate_number, owner_name, parking_number, residence_id) VALUES ('T 122 ABB', 'John Doe', 'P-101', 's1')");
+      await pool.query("INSERT INTO registered_vehicles (plate_number, owner_name, parking_number, residence_id) VALUES ('T 456 DEF', 'Jane Smith', 'P-102', 's1')");
+      await pool.query("INSERT INTO registered_vehicles (plate_number, owner_name, parking_number, residence_id) VALUES ('T 789 GHI', 'Robert Johnson', 'P-101', 's2')"); 
       
       // Initialize parking status
-      await pool.query("INSERT INTO parking_status (parking_number) VALUES ('P-101') ON CONFLICT DO NOTHING");
-      await pool.query("INSERT INTO parking_status (parking_number) VALUES ('P-102') ON CONFLICT DO NOTHING");
+      await pool.query("INSERT INTO parking_status (parking_number, residence_id) VALUES ('P-101', 's1') ON CONFLICT DO NOTHING");
+      await pool.query("INSERT INTO parking_status (parking_number, residence_id) VALUES ('P-102', 's1') ON CONFLICT DO NOTHING");
     }
 
     console.log('Database tables verified/created successfully.');
@@ -85,7 +106,7 @@ setupDB();
 
 // API Endpoint: Verify Plate
 app.post('/api/verify-plate', async (req, res) => {
-  const { plateNumber, officerName = 'Officer Johnson', direction = 'in' } = req.body;
+  const { plateNumber, officerName = 'Officer Johnson', direction = 'in', residenceId } = req.body;
   
   if (!plateNumber) {
     return res.status(400).json({ error: 'Plate number is required' });
@@ -93,55 +114,64 @@ app.post('/api/verify-plate', async (req, res) => {
 
   try {
     // 1. Verify against registered database
-    const checkRes = await pool.query('SELECT * FROM registered_vehicles WHERE plate_number = $1', [plateNumber]);
+    let query = 'SELECT * FROM registered_vehicles WHERE plate_number = $1';
+    let params = [plateNumber];
+    
+    if (residenceId) {
+      query += ' AND residence_id = $2';
+      params.push(residenceId);
+    }
+
+    const checkRes = await pool.query(query, params);
     const isRegistered = checkRes.rows.length > 0;
     
     if (!isRegistered) {
       await pool.query(
-        'INSERT INTO gate_verification (plate_number, access_status, officer_name, direction, log_time) VALUES ($1, $2, $3, $4, NOW())',
-        [plateNumber, 'Access Denied', officerName, direction]
+        'INSERT INTO gate_verification (plate_number, access_status, officer_name, direction, residence_id, log_time) VALUES ($1, $2, $3, $4, $5, NOW())',
+        [plateNumber, 'Access Denied', officerName, direction, residenceId]
       );
       return res.json({ 
         status: 'Access Denied', 
         isRegistered: false,
         plateNumber,
         officerName,
-        reason: 'Vehicle not registered'
+        reason: 'Vehicle not registered or not authorized for this residence'
       });
     }
 
     const vehicle = checkRes.rows[0];
     const parkingNumber = vehicle.parking_number;
     const ownerName = vehicle.owner_name;
+    const vehicleResidenceId = vehicle.residence_id;
 
     // 2. Check Parking Occupancy
     let accessStatus = 'Access Granted';
     let reason = '';
 
     if (direction === 'in') {
-      const parkingRes = await pool.query('SELECT * FROM parking_status WHERE parking_number = $1', [parkingNumber]);
+      const parkingRes = await pool.query('SELECT * FROM parking_status WHERE parking_number = $1 AND residence_id = $2', [parkingNumber, vehicleResidenceId]);
       
       if (parkingRes.rows.length === 0) {
         // Initialize if not exists
-        await pool.query('INSERT INTO parking_status (parking_number, is_occupied, occupied_by_plate) VALUES ($1, TRUE, $2)', [parkingNumber, plateNumber]);
+        await pool.query('INSERT INTO parking_status (parking_number, is_occupied, occupied_by_plate, residence_id) VALUES ($1, TRUE, $2, $3)', [parkingNumber, plateNumber, vehicleResidenceId]);
       } else if (parkingRes.rows[0].is_occupied) {
         accessStatus = 'Access Denied';
         reason = `Parking ${parkingNumber} already occupied by ${parkingRes.rows[0].occupied_by_plate}`;
       } else {
         // Mark as occupied
-        await pool.query('UPDATE parking_status SET is_occupied = TRUE, occupied_by_plate = $1, last_updated = NOW() WHERE parking_number = $2', [plateNumber, parkingNumber]);
+        await pool.query('UPDATE parking_status SET is_occupied = TRUE, occupied_by_plate = $1, last_updated = NOW() WHERE parking_number = $2 AND residence_id = $3', [plateNumber, parkingNumber, vehicleResidenceId]);
       }
     } else {
       // Direction is OUT
-      await pool.query('UPDATE parking_status SET is_occupied = FALSE, occupied_by_plate = NULL, last_updated = NOW() WHERE parking_number = $1', [parkingNumber]);
+      await pool.query('UPDATE parking_status SET is_occupied = FALSE, occupied_by_plate = NULL, last_updated = NOW() WHERE parking_number = $1 AND residence_id = $2', [parkingNumber, vehicleResidenceId]);
       accessStatus = 'Access Granted';
       reason = 'Vehicle exited, parking cleared';
     }
 
     // 3. Automated Logging
     await pool.query(
-      'INSERT INTO gate_verification (plate_number, access_status, officer_name, direction, parking_number, log_time) VALUES ($1, $2, $3, $4, $5, NOW())',
-      [plateNumber, accessStatus, officerName, direction, parkingNumber]
+      'INSERT INTO gate_verification (plate_number, access_status, officer_name, direction, parking_number, residence_id, log_time) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+      [plateNumber, accessStatus, officerName, direction, parkingNumber, vehicleResidenceId]
     );
 
     // 4. Security Alerts
@@ -158,6 +188,7 @@ app.post('/api/verify-plate', async (req, res) => {
       ownerName,
       officerName,
       parkingNumber,
+      residenceId: vehicleResidenceId,
       reason
     });
   } catch (error) {
@@ -168,15 +199,20 @@ app.post('/api/verify-plate', async (req, res) => {
 
 // API Endpoint: Get Stats
 app.get('/api/stats', async (req, res) => {
+  const { residenceId } = req.query;
   try {
-    const entriesRes = await pool.query(`
-      SELECT COUNT(*) FROM gate_verification 
-      WHERE DATE(log_time) = CURRENT_DATE
-    `);
-    const deniedRes = await pool.query(`
-      SELECT COUNT(*) FROM gate_verification 
-      WHERE access_status = 'Access Denied' AND DATE(log_time) = CURRENT_DATE
-    `);
+    let entriesQuery = 'SELECT COUNT(*) FROM gate_verification WHERE DATE(log_time) = CURRENT_DATE';
+    let deniedQuery = "SELECT COUNT(*) FROM gate_verification WHERE access_status = 'Access Denied' AND DATE(log_time) = CURRENT_DATE";
+    let params = [];
+
+    if (residenceId) {
+      entriesQuery += ' AND residence_id = $1';
+      deniedQuery += ' AND residence_id = $1';
+      params.push(residenceId);
+    }
+
+    const entriesRes = await pool.query(entriesQuery, params);
+    const deniedRes = await pool.query(deniedQuery, params);
     
     res.json({
       entries: parseInt(entriesRes.rows[0].count),
@@ -185,6 +221,17 @@ app.get('/api/stats', async (req, res) => {
   } catch (error) {
     console.error('Stats error:', error);
     res.status(500).json({ error: 'Internal server error fetching stats' });
+  }
+});
+
+// API Endpoint: Get Residences
+app.get('/api/residences', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM residences');
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Residences error:', error);
+    res.status(500).json({ error: 'Internal server error fetching residences' });
   }
 });
 
