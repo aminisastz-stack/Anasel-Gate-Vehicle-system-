@@ -414,6 +414,8 @@ export default function App() {
   const [fullLogsPage, setFullLogsPage] = useState(1);
   const [fullLogsPerPage, setFullLogsPerPage] = useState(10);
   const logsPerPage = 5;
+  const QR_SCAN_INTERVAL_MS = 200;
+  const PLATE_SCAN_INTERVAL_MS = 1000;
 
   const navigate = (screen: Screen) => {
     setCurrentScreen(screen);
@@ -493,6 +495,40 @@ export default function App() {
     });
   };
 
+  const decodePlateFromBase64 = async (imageSrc: string): Promise<string | null> => {
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const base64Data = imageSrc.split(',')[1];
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          {
+            parts: [
+              { text: "Extract the license plate number from this car photo. Return only the plate number in JSON format." },
+              { inlineData: { mimeType: "image/jpeg", data: base64Data } }
+            ]
+          }
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              plateNumber: { type: Type.STRING }
+            },
+            required: ["plateNumber"]
+          }
+        }
+      });
+      const aiResult = JSON.parse(response.text || '{}');
+      const plate = aiResult.plateNumber?.toUpperCase() || null;
+      if (plate && isValidTanzanianPlate(plate)) return plate;
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
   useEffect(() => {
     if (showCamera && cameraType === 'qr') {
       qrDetectingRef.current = true;
@@ -507,7 +543,7 @@ export default function App() {
             return;
           }
         }
-        setTimeout(loop, 300);
+        setTimeout(loop, QR_SCAN_INTERVAL_MS);
       };
       loop();
       return () => {
@@ -519,11 +555,14 @@ export default function App() {
         if (!plateDetectingRef.current) return;
         const imageSrc = webcamRef.current?.getScreenshot();
         if (imageSrc) {
-          plateDetectingRef.current = false;
-          await processVehicleScan(imageSrc);
-          return;
+          const plate = await decodePlateFromBase64(imageSrc);
+          if (plate) {
+            plateDetectingRef.current = false;
+            await processVehicleScan(imageSrc);
+            return;
+          }
         }
-        setTimeout(loop, 300);
+        setTimeout(loop, PLATE_SCAN_INTERVAL_MS);
       };
       loop();
       return () => {
@@ -3365,7 +3404,9 @@ export default function App() {
                 >
                   <Camera className="w-10 h-10" />
                 </button>
-                <p className="mt-4 text-slate-400 font-bold text-[10px] uppercase tracking-widest">Tap to Capture & Scan</p>
+                <p className="mt-4 text-slate-400 font-bold text-[10px] uppercase tracking-widest">
+                  {cameraType === 'qr' ? 'Auto scanning… Hold QR steady in the frame' : 'Auto scanning… Hold plate steady; use good lighting'}
+                </p>
               </div>
             </motion.div>
           </div>
