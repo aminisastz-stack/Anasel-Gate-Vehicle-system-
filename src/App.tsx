@@ -361,6 +361,8 @@ export default function App() {
   const [showKeypad, setShowKeypad] = useState(false);
   const [isManualInputFocused, setIsManualInputFocused] = useState(false);
   const [plateFormatError, setPlateFormatError] = useState<string | null>(null);
+  const [showPlateReviewModal, setShowPlateReviewModal] = useState(false);
+  const [pendingPlate, setPendingPlate] = useState<{ imageSrc: string, plate: string } | null>(null);
 
   // Tanzanian Plate Formatting & Validation
   const formatTanzanianPlate = (value: string) => {
@@ -561,27 +563,93 @@ export default function App() {
       return () => {
         qrDetectingRef.current = false;
       };
-    } else if (showCamera && cameraType === 'plate') {
-      plateDetectingRef.current = true;
-      const loop = async () => {
-        if (!plateDetectingRef.current) return;
-        const imageSrc = webcamRef.current?.getScreenshot();
-        if (imageSrc) {
-          const plate = await decodePlateFromBase64(imageSrc);
-          if (plate) {
-            plateDetectingRef.current = false;
-            await processVehicleScan(imageSrc);
-            return;
-          }
-        }
-        setTimeout(loop, PLATE_SCAN_INTERVAL_MS);
-      };
-      loop();
-      return () => {
-        plateDetectingRef.current = false;
-      };
     }
   }, [showCamera, cameraType]);
+
+  const commitPlateActivity = async (plate: string, result: any = {}) => {
+    const normalizedPlate = normalizePlate(plate);
+    const foundVehicleIndex = vehicles.findIndex(v => normalizePlate(v.plateNumber) === normalizedPlate);
+    const foundVehicle = foundVehicleIndex !== -1 ? vehicles[foundVehicleIndex] : null;
+    const action = foundVehicle?.status === 'checked-in' ? 'check-out' : 'check-in';
+    const parkingNumber = foundVehicle?.parkingNumber || result.parking;
+    const occupyingVehicle = action === 'check-in' && parkingNumber ? vehicles.find(v => 
+      v.parkingNumber === parkingNumber && 
+      normalizePlate(v.plateNumber) !== normalizedPlate && 
+      v.status === 'checked-in'
+    ) : null;
+
+    if (occupyingVehicle) {
+      setDeniedReason(`Entrance Denied: Parking slot ${parkingNumber} is currently occupied by vehicle ${occupyingVehicle.plateNumber}. The previous vehicle must check out first.`);
+      const deniedLog: AccessLog = {
+        id: `log-${Date.now()}`,
+        timestamp: new Date(),
+        plateNumber: plate,
+        status: 'denied',
+        action: 'check-in',
+        residentName: foundVehicle?.ownerName || result.owner || 'Unknown Visitor',
+        companyName: currentUser?.companyName || 'SecureCorp Solutions',
+        guardName: currentUser?.name || 'Officer guard'
+      };
+      setLogs(prev => [deniedLog, ...prev]);
+      navigate('denied');
+      return;
+    }
+
+    const newStatus = action === 'check-in' ? 'checked-in' : 'checked-out';
+    const vehicleToLog: Vehicle = foundVehicle ? {
+      ...foundVehicle,
+      status: newStatus,
+      lastScanTime: new Date()
+    } : {
+      id: `v-${Date.now()}`,
+      siteId: currentUser?.siteId || 's1',
+      plateNumber: plate,
+      ownerName: result.ownerName || 'Unknown Visitor',
+      parkingNumber: result.parkingNumber || result.parking,
+      vehicleNumber: result.vehicleNumber,
+      status: newStatus,
+      lastScanTime: new Date()
+    };
+    if (foundVehicleIndex !== -1) {
+      const updatedVehicles = [...vehicles];
+      updatedVehicles[foundVehicleIndex] = vehicleToLog;
+      setVehicles(updatedVehicles);
+      localStorage.setItem('app_vehicles', JSON.stringify(updatedVehicles));
+    }
+    setScannedVehicle(vehicleToLog);
+    const newLog: AccessLog = {
+      id: `log-${Date.now()}`,
+      timestamp: new Date(),
+      plateNumber: plate,
+      status: foundVehicle ? 'granted' : 'denied',
+      action: action,
+      residentName: vehicleToLog.ownerName,
+      companyName: currentUser?.companyName || 'SecureCorp Solutions',
+      guardName: currentUser?.name || 'Officer guard'
+    };
+    setLogs(prev => [newLog, ...prev]);
+    const history = logs.filter(l => normalizePlate(l.plateNumber) === normalizedPlate);
+    setScannedLogs([newLog, ...history]);
+    try {
+      await fetch('/api/verify-plate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plateNumber: plate,
+          officerName: currentUser?.username || 'Officer Johnson',
+          direction: action === 'check-in' ? 'in' : 'out',
+          residenceId: currentUser?.siteId
+        })
+      });
+    } catch {}
+    if (currentScreen === 'dashboard') {
+      navigate(foundVehicle ? 'success' : 'denied');
+    } else if (currentScreen === 'manual') {
+      setSearchQuery(plate);
+    } else if (currentScreen === 'guest-entry') {
+      setGuestData(prev => ({ ...prev, plateNumber: plate }));
+    }
+  };
 
   const processVehicleScan = async (imageSrc: string) => {
     if (!cameraType) return;
@@ -633,6 +701,13 @@ export default function App() {
         const raw = aiResult.plateNumber || '';
         const normalized = normalizePlate(raw);
         plate = isValidTanzanianPlate(normalized) ? formatPlateForDisplay(normalized) : undefined;
+        if (plate) {
+          setPendingPlate({ imageSrc, plate });
+          setShowPlateReviewModal(true);
+          setIsScanningVehicle(null);
+          setCameraType(null);
+          return;
+        }
       }
 
         if (plate) {
@@ -3888,6 +3963,75 @@ export default function App() {
                     className="w-full bg-slate-100 text-slate-600 font-bold py-5 rounded-[24px] active:scale-[0.98] transition-all"
                   >
                     Cancel
+                  </motion.button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Plate Review Modal */}
+      <AnimatePresence>
+        {showPlateReviewModal && pendingPlate && (
+          <div className="fixed inset-0 z-[75] flex items-end sm:items-center justify-center p-0 sm:p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPlateReviewModal(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="bg-white w-full max-w-md rounded-t-[40px] sm:rounded-[40px] shadow-2xl z-10 overflow-hidden flex flex-col"
+            >
+              <div className="bg-deep-blue p-6 text-white flex items-center justify-between">
+                <h3 className="text-xl font-black uppercase tracking-tight">Review Plate</h3>
+                <button 
+                  onClick={() => setShowPlateReviewModal(false)}
+                  className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="rounded-2xl overflow-hidden border border-slate-200">
+                  <img src={pendingPlate.imageSrc} alt="Captured plate" className="w-full h-48 object-cover" />
+                </div>
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Detected Plate</p>
+                  <p className="text-xl font-black tracking-wide">{pendingPlate.plate}</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={async () => {
+                      await commitPlateActivity(pendingPlate.plate, {});
+                      setShowPlateReviewModal(false);
+                      setPendingPlate(null);
+                    }}
+                    className="w-full bg-[#0a2540] text-white font-bold py-4 rounded-[20px] shadow-lg active:scale-[0.98] transition-all"
+                  >
+                    Approve & Submit
+                  </motion.button>
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      setShowPlateReviewModal(false);
+                      setPendingPlate(null);
+                      setCameraType('plate');
+                      setShowCamera(true);
+                    }}
+                    className="w-full bg-slate-100 text-slate-700 font-bold py-4 rounded-[20px] active:scale-[0.98] transition-all"
+                  >
+                    Retake
                   </motion.button>
                 </div>
               </div>
