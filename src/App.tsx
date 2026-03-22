@@ -2802,23 +2802,27 @@ export default function App() {
                         >
                           <QrCode className="w-5 h-5" />
                         </button>
-                        <button 
-                          onClick={() => {
-                            setEditingVehicle(vehicle);
-                            setShowEditVehicleModal(true);
-                          }}
-                          className="w-10 h-10 flex items-center justify-center text-slate-300 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all active:scale-90"
-                        >
-                          <Settings className="w-5 h-5" />
-                        </button>
-                        <button 
-                          onClick={() => {
-                            setVehicles(prev => prev.filter(v => v.id !== vehicle.id));
-                          }}
-                          className="w-10 h-10 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all active:scale-90"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
+                        {(currentUser?.role === 'super-admin' || currentUser?.role === 'company-admin' || currentUser?.role === 'supervisor') && (
+                          <>
+                            <button 
+                              onClick={() => {
+                                setEditingVehicle(vehicle);
+                                setShowEditVehicleModal(true);
+                              }}
+                              className="w-10 h-10 flex items-center justify-center text-slate-300 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all active:scale-90"
+                            >
+                              <Settings className="w-5 h-5" />
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setVehicles(prev => prev.filter(v => v.id !== vehicle.id));
+                              }}
+                              className="w-10 h-10 flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all active:scale-90"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

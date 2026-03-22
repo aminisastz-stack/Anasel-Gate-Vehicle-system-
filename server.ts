@@ -12,21 +12,34 @@ app.use(cors());
 const PORT = 3000;
 
 // Initialize DB Connection
-const dbConfig = {
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  host: process.env.DB_HOST,
-  port: parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_NAME,
-  ssl: false
-};
+const useConnectionString = !!process.env.DATABASE_URL;
+const sslSetting = process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false;
 
-if (!dbConfig.user || !dbConfig.password || !dbConfig.host || !dbConfig.database) {
-  console.error('Missing required database environment variables.');
-  process.exit(1);
+if (!useConnectionString) {
+  const dbConfig = {
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    host: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT || '5432'),
+    database: process.env.DB_NAME,
+    ssl: sslSetting
+  };
+  if (!dbConfig.user || !dbConfig.password || !dbConfig.host || !dbConfig.database) {
+    console.error('Missing required database environment variables. Provide DATABASE_URL or DB_USER/DB_PASSWORD/DB_HOST/DB_PORT/DB_NAME.');
+    process.exit(1);
+  }
 }
 
-const pool = new Pool(dbConfig);
+const pool = useConnectionString
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: sslSetting })
+  : new Pool({
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      host: process.env.DB_HOST,
+      port: parseInt(process.env.DB_PORT || '5432'),
+      database: process.env.DB_NAME,
+      ssl: sslSetting
+    });
 
 // Setup DB tables
 async function setupDB() {
