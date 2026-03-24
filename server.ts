@@ -119,7 +119,17 @@ setupDB();
 
 // API Endpoint: Verify Plate
 app.post('/api/verify-plate', async (req, res) => {
-  const { plateNumber, officerName = 'Officer Johnson', direction = 'in', residenceId } = req.body;
+  const { 
+    plateNumber, 
+    officerName = 'Officer Johnson', 
+    direction = 'in', 
+    residenceId,
+    visitorName,
+    visitorPhone,
+    visitorIdNumber,
+    hostName,
+    purpose
+  } = req.body;
   
   if (!plateNumber) {
     return res.status(400).json({ error: 'Plate number is required' });
@@ -138,43 +148,54 @@ app.post('/api/verify-plate', async (req, res) => {
     const checkRes = await pool.query(query, params);
     const isRegistered = checkRes.rows.length > 0;
     
-    if (!isRegistered) {
+    const vehicle = isRegistered ? checkRes.rows[0] : null;
+    const parkingNumber = vehicle?.parking_number || null;
+    const ownerName = vehicle?.owner_name || visitorName || 'Visitor';
+    const vehicleResidenceId = vehicle?.residence_id || residenceId;
+
+    // If not registered and no residenceId provided, deny access
+    if (!isRegistered && !residenceId) {
       await pool.query(
-        'INSERT INTO gate_verification (plate_number, access_status, officer_name, direction, residence_id, log_time) VALUES ($1, $2, $3, $4, $5, NOW())',
-        [plateNumber, 'Access Denied', officerName, direction, residenceId]
+        `INSERT INTO gate_verification (
+          plate_number, visitor_name, visitor_phone, visitor_id_number, host_name, purpose,
+          access_status, officer_name, direction, parking_number, residence_id, log_time
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+        [
+          plateNumber, visitorName, visitorPhone, visitorIdNumber, hostName, purpose,
+          'Access Denied', officerName, direction, parkingNumber, residenceId
+        ]
       );
       return res.json({ 
         status: 'Access Denied', 
         isRegistered: false,
         plateNumber,
         officerName,
-        reason: 'Vehicle not registered or not authorized for this residence'
+        reason: 'Vehicle not registered and no residence ID provided for visitor access.'
       });
     }
-
-    const vehicle = checkRes.rows[0];
-    const parkingNumber = vehicle.parking_number;
-    const ownerName = vehicle.owner_name;
-    const vehicleResidenceId = vehicle.residence_id;
 
     // 2. Check Parking Occupancy
     let accessStatus = 'Access Granted';
     let reason = '';
 
-    if (direction === 'in') {
+    if (direction === 'in' && parkingNumber) {
       const parkingRes = await pool.query('SELECT * FROM parking_status WHERE parking_number = $1 AND residence_id = $2', [parkingNumber, vehicleResidenceId]);
       
       if (parkingRes.rows.length === 0) {
         // Initialize if not exists
         await pool.query('INSERT INTO parking_status (parking_number, is_occupied, occupied_by_plate, residence_id) VALUES ($1, TRUE, $2, $3)', [parkingNumber, plateNumber, vehicleResidenceId]);
       } else if (parkingRes.rows[0].is_occupied) {
-        accessStatus = 'Access Denied';
-        reason = `Parking ${parkingNumber} already occupied by ${parkingRes.rows[0].occupied_by_plate}`;
+        // If it's a registered resident vehicle and the spot is taken by THEM, it's fine. 
+        // But if it's taken by someone else, alert.
+        if (parkingRes.rows[0].occupied_by_plate !== plateNumber) {
+          accessStatus = 'Access Denied';
+          reason = `Parking ${parkingNumber} already occupied by ${parkingRes.rows[0].occupied_by_plate}`;
+        }
       } else {
         // Mark as occupied
         await pool.query('UPDATE parking_status SET is_occupied = TRUE, occupied_by_plate = $1, last_updated = NOW() WHERE parking_number = $2 AND residence_id = $3', [plateNumber, parkingNumber, vehicleResidenceId]);
       }
-    } else {
+    } else if (direction === 'out' && parkingNumber) {
       // Direction is OUT
       await pool.query('UPDATE parking_status SET is_occupied = FALSE, occupied_by_plate = NULL, last_updated = NOW() WHERE parking_number = $1 AND residence_id = $2', [parkingNumber, vehicleResidenceId]);
       accessStatus = 'Access Granted';
@@ -183,8 +204,14 @@ app.post('/api/verify-plate', async (req, res) => {
 
     // 3. Automated Logging
     await pool.query(
-      'INSERT INTO gate_verification (plate_number, access_status, officer_name, direction, parking_number, residence_id, log_time) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
-      [plateNumber, accessStatus, officerName, direction, parkingNumber, vehicleResidenceId]
+      `INSERT INTO gate_verification (
+        plate_number, visitor_name, visitor_phone, visitor_id_number, host_name, purpose,
+        access_status, officer_name, direction, parking_number, residence_id, log_time
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+      [
+        plateNumber, visitorName, visitorPhone, visitorIdNumber, hostName, purpose,
+        accessStatus, officerName, direction, parkingNumber, vehicleResidenceId
+      ]
     );
 
     // 4. Security Alerts
@@ -199,6 +226,7 @@ app.post('/api/verify-plate', async (req, res) => {
       isRegistered,
       plateNumber,
       ownerName,
+      visitorName,
       officerName,
       parkingNumber,
       residenceId: vehicleResidenceId,
@@ -207,6 +235,38 @@ app.post('/api/verify-plate', async (req, res) => {
   } catch (error) {
     console.error('Verification error:', error);
     res.status(500).json({ error: 'Internal server error during verification' });
+  }
+});
+
+// API Endpoint: Check Out (Digital Log Book)
+app.put('/api/check-out/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    // 1. Get log details to find parking number
+    const logRes = await pool.query('SELECT * FROM gate_verification WHERE id = $1', [id]);
+    if (logRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Log entry not found' });
+    }
+
+    const log = logRes.rows[0];
+    const { plate_number, parking_number, residence_id } = log;
+
+    // 2. Update log direction
+    await pool.query('UPDATE gate_verification SET direction = $1 WHERE id = $2', ['out', id]);
+
+    // 3. Clear parking if applicable
+    if (parking_number) {
+      await pool.query(
+        'UPDATE parking_status SET is_occupied = FALSE, occupied_by_plate = NULL, last_updated = NOW() WHERE parking_number = $1 AND residence_id = $2',
+        [parking_number, residence_id]
+      );
+    }
+
+    console.log(`[CHECK-OUT] Log ID ${id} (Plate ${plate_number}) checked out.`);
+    res.json({ message: 'Checked out successfully', id });
+  } catch (error) {
+    console.error('Check-out error:', error);
+    res.status(500).json({ error: 'Internal server error during check-out' });
   }
 });
 

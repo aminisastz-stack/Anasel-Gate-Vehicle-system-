@@ -102,14 +102,14 @@ const MOCK_LOGS: AccessLog[] = [
     timestamp: new Date(Date.now() - 15 * 60000), 
     plateNumber: 'T 999 XYZ', 
     status: 'denied',
+    residentName: 'Visitor',
     companyName: 'SecureCorp Solutions',
     guardName: 'Officer guard',
     action: 'check-in',
-    guestDetails: {
-      idType: 'National ID',
-      idNumber: 'NID-8822',
-      purpose: 'Delivery'
-    }
+    visitorName: 'Mark Thompson',
+    visitorPhone: '+255 700 000 002',
+    visitorIdNumber: '8822-NID',
+    purpose: 'Delivery'
   },
   { 
     id: '3', 
@@ -120,26 +120,7 @@ const MOCK_LOGS: AccessLog[] = [
     companyName: 'Global Guarding Inc',
     guardName: 'Officer g2',
     action: 'check-in'
-  },
-  { 
-    id: '4', 
-    timestamp: new Date(Date.now() - 120 * 60000), 
-    plateNumber: 'T 101 GHI', 
-    status: 'granted', 
-    residentName: 'Michael Chen',
-    companyName: 'Global Guarding Inc',
-    guardName: 'Officer g2',
-    action: 'check-in'
-  },
-  { id: '5', timestamp: new Date(Date.now() - 130 * 60000), plateNumber: 'T 202 JKL', status: 'granted', residentName: 'Michael Wilson', companyName: 'SecureCorp Solutions', guardName: 'Officer guard', action: 'check-in' },
-  { id: '6', timestamp: new Date(Date.now() - 140 * 60000), plateNumber: 'T 334 MNO', status: 'denied', companyName: 'SecureCorp Solutions', guardName: 'Officer guard', action: 'check-in' },
-  { id: '7', timestamp: new Date(Date.now() - 150 * 60000), plateNumber: 'T 556 PQR', status: 'granted', residentName: 'Laura Thompson', companyName: 'SecureCorp Solutions', guardName: 'Officer guard', action: 'check-in' },
-  { id: '8', timestamp: new Date(Date.now() - 160 * 60000), plateNumber: 'T 778 STU', status: 'granted', residentName: 'David Lee', companyName: 'SecureCorp Solutions', guardName: 'Officer guard', action: 'check-in' },
-  { id: '9', timestamp: new Date(Date.now() - 170 * 60000), plateNumber: 'T 990 VWX', status: 'denied', companyName: 'SecureCorp Solutions', guardName: 'Officer guard', action: 'check-in' },
-  { id: '10', timestamp: new Date(Date.now() - 180 * 60000), plateNumber: 'T 112 YZA', status: 'granted', residentName: 'Emma White', companyName: 'SecureCorp Solutions', guardName: 'Officer guard', action: 'check-in' },
-  { id: '11', timestamp: new Date(Date.now() - 190 * 60000), plateNumber: 'T 334 BCD', status: 'granted', residentName: 'James Brown', companyName: 'SecureCorp Solutions', guardName: 'Officer guard', action: 'check-in' },
-  { id: '12', timestamp: new Date(Date.now() - 200 * 60000), plateNumber: 'T 556 EFG', status: 'denied', companyName: 'SecureCorp Solutions', guardName: 'Officer guard', action: 'check-in' },
-  { id: '13', timestamp: new Date(Date.now() - 210 * 60000), plateNumber: 'T 778 HIJ', status: 'granted', residentName: 'Sophia Green', companyName: 'SecureCorp Solutions', guardName: 'Officer guard', action: 'check-in' },
+  }
 ];
 
 const MOCK_VEHICLES: Vehicle[] = [
@@ -250,14 +231,47 @@ export default function App() {
     checkDbConnection();
   }, []);
 
+  const fetchLogs = async () => {
+    try {
+      // In a real app, this would fetch from /api/logs
+      // For now, we manually refresh from localStorage or database if we had a list endpoint
+      const saved = localStorage.getItem('app_logs');
+      if (saved) {
+        setLogs(JSON.parse(saved).map((l: any) => ({ ...l, timestamp: new Date(l.timestamp) })));
+      }
+    } catch (err) {
+      console.error('Failed to fetch logs:', err);
+    }
+  };
+
   const fetchStats = async () => {
     try {
       const url = currentUser?.siteId ? `/api/stats?residenceId=${currentUser.siteId}` : '/api/stats';
       const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
-        // System relies on local logs for accurate realtime session stats
-        // setStats(data);
+        const today = new Date().toDateString();
+        const todayLogs = logs.filter(log => new Date(log.timestamp).toDateString() === today);
+        
+        // Count unique plates currently 'in'
+        const currentlyInPlates = new Set();
+        const processedPlates = new Set();
+        
+        // Sort logs by newest first to see last action per plate
+        [...logs].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()).forEach(log => {
+          if (!processedPlates.has(log.plateNumber)) {
+            if (log.action === 'check-in') {
+              currentlyInPlates.add(log.plateNumber);
+            }
+            processedPlates.add(log.plateNumber);
+          }
+        });
+
+        setStats({
+          entries: todayLogs.filter(log => log.status === 'granted').length,
+          denied: todayLogs.filter(log => log.status === 'denied').length,
+          currentlyInside: currentlyInPlates.size
+        });
       }
     } catch (err) {
       console.error('Failed to fetch stats:', err);
@@ -341,10 +355,12 @@ export default function App() {
   // Guest Entry State
   const [guestData, setGuestData] = useState<GuestEntry>({
     name: '',
-    idType: '',
+    phone: '',
     idNumber: '',
-    purpose: '',
-    plateNumber: ''
+    idType: 'National ID',
+    hostName: '',
+    purpose: 'Guest',
+    plateNumber: '',
   });
   const [isProcessingID, setIsProcessingID] = useState(false);
   const [selectedLog, setSelectedLog] = useState<AccessLog | null>(null);
@@ -530,7 +546,7 @@ export default function App() {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
       const base64Data = imageSrc.split(',')[1];
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-1.5-flash-latest",
         contents: [
           {
             parts: [
@@ -693,7 +709,7 @@ export default function App() {
         const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
         const base64Data = imageSrc.split(',')[1];
         const response = await ai.models.generateContent({
-          model: "gemini-1.5-flash",
+          model: "gemini-1.5-flash-latest",
           contents: [
             {
               parts: [
@@ -1010,7 +1026,7 @@ export default function App() {
       const bannedDescriptions = bannedUsers.map(b => `${b.name}: ${b.description}`).join('\n');
       
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-1.5-flash-latest",
         contents: [
           {
             parts: [
@@ -1065,14 +1081,32 @@ export default function App() {
 
 
   const handleManualCheck = async () => {
+    // Collect all data
+    const registrationData = {
+      plateNumber: (currentScreen === 'guest-entry' ? guestData.plateNumber : searchQuery).toUpperCase(),
+      officerName: currentUser?.username || 'Officer Johnson',
+      direction: currentScreen === 'guest-entry' ? 'in' : scanDirection,
+      residenceId: currentUser?.siteId,
+      visitorName: guestData.name,
+      visitorPhone: guestData.phone,
+      visitorIdNumber: guestData.idNumber,
+      hostName: guestData.hostName,
+      purpose: guestData.purpose
+    };
+
     if (!isOnlineRef.current) {
         const log: AccessLog = { 
           id: `log-${Date.now()}`,
           timestamp: new Date(),
-          plateNumber: searchQuery.toUpperCase(),
+          plateNumber: registrationData.plateNumber,
           status: 'granted' as const,
-          action: 'check-in' as const,
-          residentName: 'Unknown Resident',
+          action: registrationData.direction as 'check-in' | 'check-out',
+          residentName: registrationData.visitorName || 'Unknown Visitor',
+          visitorName: registrationData.visitorName,
+          visitorPhone: registrationData.visitorPhone,
+          visitorIdNumber: registrationData.visitorIdNumber,
+          hostName: registrationData.hostName,
+          purpose: registrationData.purpose,
           siteId: currentUser?.siteId,
           companyName: currentUser?.companyName || 'SecureCorp Solutions',
           guardName: currentUser?.name || 'Officer guard'
@@ -1088,35 +1122,18 @@ export default function App() {
       const response = await fetch('/api/verify-plate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          plateNumber: searchQuery.toUpperCase(),
-          officerName: currentUser?.username || 'Officer Johnson',
-          direction: scanDirection,
-          residenceId: currentUser?.siteId
-        })
+        body: JSON.stringify(registrationData)
       });
       const data = await response.json();
-      await fetchStats(); // Update stats after manual check
+      await fetchStats(); 
+      await fetchLogs(); // Refresh logs to get the recorded entry
       
-      const newLog: AccessLog = {
-        id: `log-${Date.now()}`,
-        timestamp: new Date(),
-        plateNumber: searchQuery.toUpperCase(),
-        status: data.status === 'Access Granted' ? 'granted' : 'denied',
-        action: scanDirection === 'in' ? 'check-in' : 'check-out',
-        residentName: data.ownerName || 'Unknown Visitor',
-        siteId: currentUser?.siteId,
-        companyName: currentUser?.companyName || 'SecureCorp Solutions',
-        guardName: currentUser?.name || 'Officer guard'
-      };
-      setLogs(prev => [newLog, ...prev]);
-
       if (data.status === 'Access Granted') {
         setVerifiedResident({
-          name: data.ownerName || 'Unknown Resident',
+          name: data.visitorName || data.ownerName || 'Unknown Resident',
           plateNumber: data.plateNumber,
           parkingNumber: data.parkingNumber || 'N/A',
-          unit: 'Unit 101' // Mock unit for now
+          unit: registrationData.hostName || 'Unit TBD'
         });
         navigate('success');
       } else {
@@ -1125,22 +1142,60 @@ export default function App() {
       }
     } catch (err) {
       console.error('API Error:', err);
+      // Fallback to local logging
       const log: AccessLog = { 
         id: `log-${Date.now()}`,
         timestamp: new Date(),
-        plateNumber: searchQuery.toUpperCase(),
-        status: 'granted' as const,
-        action: 'check-in' as const,
-        residentName: 'Unknown Resident',
+        plateNumber: registrationData.plateNumber,
+        status: 'granted',
+        action: registrationData.direction as 'check-in' | 'check-out',
+        residentName: registrationData.visitorName || 'Unknown Visitor',
+        visitorName: registrationData.visitorName,
+        visitorPhone: registrationData.visitorPhone,
+        visitorIdNumber: registrationData.visitorIdNumber,
+        hostName: registrationData.hostName,
+        purpose: registrationData.purpose,
         siteId: currentUser?.siteId,
         companyName: currentUser?.companyName || 'SecureCorp Solutions',
         guardName: currentUser?.name || 'Officer guard'
       };
-      const { savePendingLog } = await import('./db');
-      await savePendingLog(log);
       setLogs(prev => [log, ...prev]);
       navigate('success');
     }
+  };
+
+  const handleCheckOut = async (logId: string) => {
+    try {
+      const response = await fetch(`/api/check-out/${logId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (response.ok) {
+        await fetchStats();
+        await fetchLogs();
+        alert('Check-out successful. Parking spot freed.');
+      } else {
+        alert('Failed to check out. Please try again.');
+      }
+    } catch (err) {
+      console.error('Check-out error:', err);
+      // Local fallback
+      setLogs(prev => prev.map(l => l.id === logId ? { ...l, action: 'check-out' } : l));
+      alert('Checked out locally (Offline Mode).');
+    }
+  };
+
+  const clearGuestForm = () => {
+    setGuestData({
+      name: '',
+      phone: '',
+      idNumber: '',
+      idType: 'National ID',
+      hostName: '',
+      purpose: 'Guest',
+      plateNumber: '',
+    });
+    setFaceAlert(null);
   };
 
   const processIDImage = async (base64Data: string) => {
@@ -1148,11 +1203,11 @@ export default function App() {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-1.5-flash-latest",
         contents: [
           {
             parts: [
-              { text: "Extract the following details from this ID card image: Full Name, ID Type (e.g., Driver's License, National ID, Passport), and ID Number. Return the data in valid JSON format." },
+              { text: "Extract the following details from this ID card image: Full Name, ID Type (e.g., Driver's License, National ID, Passport), ID Number, and Phone Number (if visible). Return the data in valid JSON format." },
               { inlineData: { mimeType: "image/jpeg", data: base64Data.split(',')[1] } }
             ]
           }
@@ -1164,7 +1219,8 @@ export default function App() {
             properties: {
               name: { type: Type.STRING },
               idType: { type: Type.STRING },
-              idNumber: { type: Type.STRING }
+              idNumber: { type: Type.STRING },
+              phone: { type: Type.STRING }
             },
             required: ["name", "idType", "idNumber"]
           }
@@ -1176,7 +1232,8 @@ export default function App() {
         ...prev,
         name: result.name || '',
         idType: result.idType || '',
-        idNumber: result.idNumber || ''
+        idNumber: result.idNumber || '',
+        phone: result.phone || ''
       }));
       navigate('guest-entry');
     } catch (error: any) {
@@ -1472,18 +1529,31 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        {logs.slice(0, 6).map((log) => (
-                          <div key={log.id} className={`flex items-center space-x-3 px-3 py-3 rounded-2xl ${log.status === 'granted' ? 'bg-green-50' : 'bg-red-50'}`}>
-                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${log.status === 'granted' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                              {log.status === 'granted' ? <CheckCircle2 className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
+                        {logs.slice(0, 8).map((log) => (
+                          <div key={log.id} className={`flex items-center space-x-3 px-4 py-4 rounded-2xl ${log.status === 'granted' ? 'bg-green-50' : 'bg-red-50'} border border-black/5`}>
+                            <div className={`w-12 h-12 rounded-[18px] flex items-center justify-center flex-shrink-0 ${log.status === 'granted' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                              {log.status === 'granted' ? <CheckCircle2 className="w-6 h-6" /> : <XCircle className="w-6 h-6" />}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="font-bold text-slate-800 text-sm truncate">{log.plateNumber}</p>
-                              <p className="text-[10px] text-slate-400 font-medium truncate">{log.residentName || 'Unknown Visitor'} · {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                              <p className="font-black text-slate-800 text-lg leading-tight truncate">{log.plateNumber}</p>
+                              <p className="text-xs text-slate-500 font-bold truncate">
+                                {log.visitorName || log.residentName || 'Unknown'} · {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </p>
+                              {log.purpose && <p className="text-[10px] text-slate-400 italic truncate font-medium">"{log.purpose}"</p>}
                             </div>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${log.action === 'check-in' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                              {log.action === 'check-in' ? 'IN' : 'OUT'}
-                            </span>
+                            <div className="flex flex-col items-end space-y-1">
+                              <span className={`text-[10px] font-black px-3 py-1 rounded-full ${log.action === 'check-in' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'} uppercase tracking-tighter`}>
+                                {log.action === 'check-in' ? 'Inside' : 'Left'}
+                              </span>
+                              {log.action === 'check-in' && log.status === 'granted' && (
+                                <button 
+                                  onClick={() => handleCheckOut(log.id)}
+                                  className="text-[10px] bg-amber-500 text-white font-black px-2 py-1 rounded-lg active:scale-95 transition-transform"
+                                >
+                                  Check Out
+                                </button>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1992,20 +2062,20 @@ export default function App() {
               </div>
             </div>
 
-            <div className="p-6 space-y-4 flex-1 overflow-y-auto">
+            <div className="p-6 space-y-6 flex-1 overflow-y-auto">
               {faceAlert && (
                 <motion.div 
                   initial={{ opacity: 0, y: -20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="bg-red-50 border border-red-200 p-4 rounded-2xl flex items-start space-x-3"
+                  className="bg-red-50 border border-red-200 p-4 rounded-2xl flex items-start space-x-3 mb-4"
                 >
                   <AlertTriangle className="text-red-600 w-6 h-6 flex-shrink-0" />
                   <div>
-                    <p className="text-red-800 font-bold">BANNED USER DETECTED</p>
-                    <p className="text-red-600 text-sm font-medium">{faceAlert.name}: {faceAlert.reason}</p>
+                    <p className="text-red-800 font-bold text-lg">BANNED USER DETECTED</p>
+                    <p className="text-red-600 font-medium">{faceAlert.name}: {faceAlert.reason}</p>
                     <button 
                       onClick={() => setFaceAlert(null)}
-                      className="mt-2 text-xs bg-red-600 text-white px-3 py-1 rounded-lg font-bold"
+                      className="mt-2 text-sm bg-red-600 text-white px-4 py-2 rounded-xl font-bold min-h-[44px]"
                     >
                       Dismiss Alert
                     </button>
@@ -2013,111 +2083,129 @@ export default function App() {
                 </motion.div>
               )}
 
-              <div className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Guest Name</label>
+              <div className="space-y-5">
+                {/* Visitor Name */}
+                <div className="space-y-2">
+                  <label className="text-sm font-black text-slate-500 uppercase tracking-widest ml-1">Visitor Full Name</label>
                   <div className="relative">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-6 h-6" />
                     <input 
                       type="text" 
                       value={guestData.name}
                       onChange={(e) => setGuestData({...guestData, name: e.target.value})}
-                      placeholder="Full Name"
-                      className="w-full bg-white border border-slate-100 rounded-2xl py-4 pl-12 pr-4 text-slate-900 focus:ring-2 focus:ring-deep-blue/20 transition-all shadow-sm"
+                      placeholder="Enter Full Name"
+                      className="w-full bg-white border-2 border-slate-100 rounded-2xl py-5 pl-14 pr-4 text-slate-900 text-lg font-bold focus:ring-4 focus:ring-deep-blue/10 focus:border-deep-blue transition-all shadow-sm"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">ID Type</label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {/* Phone Number */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-black text-slate-500 uppercase tracking-widest ml-1">Phone Number</label>
                     <div className="relative">
-                      <IdCard className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                      <UserPlus className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-6 h-6" />
                       <input 
-                        type="text" 
-                        value={guestData.idType}
-                        onChange={(e) => setGuestData({...guestData, idType: e.target.value})}
-                        placeholder="e.g. License"
-                        className="w-full bg-white border border-slate-100 rounded-2xl py-4 pl-12 pr-4 text-slate-900 focus:ring-2 focus:ring-deep-blue/20 transition-all shadow-sm"
+                        type="tel" 
+                        value={guestData.phone}
+                        onChange={(e) => setGuestData({...guestData, phone: e.target.value})}
+                        placeholder="+255..."
+                        className="w-full bg-white border-2 border-slate-100 rounded-2xl py-5 pl-14 pr-4 text-slate-900 text-lg font-bold focus:ring-4 focus:ring-deep-blue/10 focus:border-deep-blue transition-all shadow-sm"
                       />
                     </div>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">ID Number</label>
+                  {/* National ID (NIDA) */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-black text-slate-500 uppercase tracking-widest ml-1">National ID (NIDA)</label>
                     <div className="relative">
-                      <FileText className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                      <FileText className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-6 h-6" />
                       <input 
                         type="text" 
                         value={guestData.idNumber}
                         onChange={(e) => setGuestData({...guestData, idNumber: e.target.value})}
-                        placeholder="ID #"
-                        className="w-full bg-white border border-slate-100 rounded-2xl py-4 pl-12 pr-4 text-slate-900 focus:ring-2 focus:ring-deep-blue/20 transition-all shadow-sm"
+                        placeholder="NIDA #"
+                        className="w-full bg-white border-2 border-slate-100 rounded-2xl py-5 pl-14 pr-4 text-slate-900 text-lg font-bold focus:ring-4 focus:ring-deep-blue/10 focus:border-deep-blue transition-all shadow-sm"
                       />
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Vehicle Plate</label>
-                  <div className="flex space-x-2">
-                    <div className="relative flex-1">
-                      <Car className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {/* Vehicle Plate */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-black text-slate-500 uppercase tracking-widest ml-1">Vehicle Plate</label>
+                    <div className="flex space-x-2">
+                      <div className="relative flex-1">
+                        <Car className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-6 h-6" />
+                        <input 
+                          type="text" 
+                          value={guestData.plateNumber}
+                          onChange={(e) => setGuestData({...guestData, plateNumber: formatTanzanianPlate(e.target.value)})}
+                          placeholder="T 000 AAA"
+                          className="w-full bg-white border-2 border-slate-100 rounded-2xl py-5 pl-14 pr-4 text-slate-900 text-lg font-black focus:ring-4 focus:ring-deep-blue/10 focus:border-deep-blue transition-all shadow-sm font-mono"
+                        />
+                      </div>
+                      <button 
+                        onClick={() => handleScanVehicle('plate')}
+                        className="bg-slate-100 text-slate-600 w-16 rounded-2xl border-2 border-slate-200 active:scale-95 transition-transform flex items-center justify-center min-h-[64px]"
+                      >
+                        <Camera className="w-8 h-8" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Host Name */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-black text-slate-500 uppercase tracking-widest ml-1">Host / Resident Name</label>
+                    <div className="relative">
+                      <Home className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-6 h-6" />
                       <input 
                         type="text" 
-                        value={guestData.plateNumber}
-                        onChange={(e) => setGuestData({...guestData, plateNumber: formatTanzanianPlate(e.target.value)})}
-                        placeholder="T 122 ABB"
-                        className="w-full bg-white border border-slate-100 rounded-2xl py-4 pl-12 pr-4 text-slate-900 focus:ring-2 focus:ring-deep-blue/20 transition-all shadow-sm font-mono"
+                        value={guestData.hostName}
+                        onChange={(e) => setGuestData({...guestData, hostName: e.target.value})}
+                        placeholder="Who are they visiting?"
+                        className="w-full bg-white border-2 border-slate-100 rounded-2xl py-5 pl-14 pr-4 text-slate-900 text-lg font-bold focus:ring-4 focus:ring-deep-blue/10 focus:border-deep-blue transition-all shadow-sm"
                       />
                     </div>
-                    <button 
-                      onClick={() => handleScanVehicle('plate')}
-                      type="button"
-                      className="bg-slate-100 text-slate-600 p-4 rounded-2xl border border-slate-200 active:scale-95 transition-transform"
-                    >
-                      <Camera className="w-6 h-6" />
-                    </button>
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Purpose of Visit</label>
-                  <textarea 
-                    value={guestData.purpose}
-                    onChange={(e) => setGuestData({...guestData, purpose: e.target.value})}
-                    placeholder="e.g. Visiting Unit 204"
-                    rows={3}
-                    className="w-full bg-white border border-slate-100 rounded-2xl py-4 px-4 text-slate-900 focus:ring-2 focus:ring-deep-blue/20 transition-all shadow-sm resize-none"
-                  />
+                {/* Purpose of Visit */}
+                <div className="space-y-2">
+                  <label className="text-sm font-black text-slate-500 uppercase tracking-widest ml-1">Purpose of Visit</label>
+                  <div className="relative">
+                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                      <AlertCircle className="w-6 h-6" />
+                    </div>
+                    <select 
+                      value={guestData.purpose}
+                      onChange={(e) => setGuestData({...guestData, purpose: e.target.value as any})}
+                      className="w-full bg-white border-2 border-slate-100 rounded-2xl py-5 pl-14 pr-10 text-slate-900 text-lg font-bold focus:ring-4 focus:ring-deep-blue/10 focus:border-deep-blue appearance-none transition-all shadow-sm"
+                    >
+                      <option value="Guest">Guest / Visiting</option>
+                      <option value="Resident">Returning Resident</option>
+                      <option value="Delivery">Delivery / Courier</option>
+                      <option value="Service">Service / Utility</option>
+                      <option value="Emergency">Emergency Services</option>
+                    </select>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 w-6 h-6 pointer-events-none" />
+                  </div>
                 </div>
               </div>
 
-              <div className="pt-4">
+              <div className="pt-6 grid grid-cols-2 gap-4">
                 <button 
-                  onClick={() => {
-                    const newLog: AccessLog = {
-                      id: `log-${Date.now()}`,
-                      timestamp: new Date(),
-                      plateNumber: guestData.plateNumber || 'N/A',
-                      status: 'granted',
-                      action: 'check-in',
-                      residentName: guestData.name,
-                      siteId: currentUser?.siteId,
-                      companyName: currentUser?.companyName || 'SecureCorp Solutions',
-                      guardName: currentUser?.name || 'Officer guard',
-                      guestDetails: {
-                        idType: guestData.idType,
-                        idNumber: guestData.idNumber,
-                        purpose: guestData.purpose
-                      }
-                    };
-                    setLogs(prev => [newLog, ...prev]);
-                    navigate('success');
-                  }}
-                  disabled={!guestData.name || !!faceAlert}
-                  className="w-full bg-deep-blue text-white font-bold py-5 rounded-[24px] shadow-xl active:scale-[0.98] transition-all disabled:opacity-50 disabled:grayscale"
+                  onClick={clearGuestForm}
+                  className="bg-amber-100 text-amber-700 font-black py-5 rounded-[24px] border-2 border-amber-200 active:scale-[0.98] transition-all min-h-[60px]"
                 >
-                  Register Guest & Grant Access
+                  Clear Form
+                </button>
+                <button 
+                  onClick={handleManualCheck}
+                  disabled={!guestData.name || !!faceAlert}
+                  className="bg-green-600 text-white font-black py-5 rounded-[24px] shadow-xl active:scale-[0.98] transition-all disabled:opacity-50 disabled:grayscale min-h-[60px]"
+                >
+                  Register & Check-In
                 </button>
               </div>
             </div>
@@ -4471,16 +4559,18 @@ export default function App() {
                     </div>
                   </div>
 
-                  {selectedLog.guestDetails && (
+                  {(selectedLog.visitorName || selectedLog.visitorIdNumber) && (
                     <div className="flex items-start space-x-4">
                       <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0">
                         <IdCard className="w-5 h-5 text-slate-600" />
                       </div>
                       <div>
-                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Guest Details</p>
-                        <p className="font-bold text-slate-800">{selectedLog.guestDetails.idType}</p>
-                        <p className="text-sm text-slate-500">ID: {selectedLog.guestDetails.idNumber}</p>
-                        <p className="text-sm text-slate-500 mt-1 italic">" {selectedLog.guestDetails.purpose} "</p>
+                        <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Visitor Details</p>
+                        <p className="font-bold text-slate-800">{selectedLog.visitorName || selectedLog.residentName}</p>
+                        {selectedLog.visitorPhone && <p className="text-sm text-slate-500">{selectedLog.visitorPhone}</p>}
+                        {selectedLog.visitorIdNumber && <p className="text-sm text-slate-500">ID: {selectedLog.visitorIdNumber}</p>}
+                        {selectedLog.purpose && <p className="text-sm text-slate-500 mt-1 italic">"{selectedLog.purpose}"</p>}
+                        {selectedLog.hostName && <p className="text-xs text-deep-blue font-bold mt-1">Visiting: {selectedLog.hostName}</p>}
                       </div>
                     </div>
                   )}
@@ -4548,38 +4638,50 @@ export default function App() {
                     <div 
                       key={log.id} 
                       onClick={() => setSelectedLog(log)}
-                      className="flex items-center justify-between p-3 rounded-2xl hover:bg-slate-50 transition-colors cursor-pointer"
+                      className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-3xl hover:bg-slate-50 transition-all cursor-pointer border-b border-slate-50 last:border-0"
                     >
-                      <div className="flex items-center space-x-4">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                      <div className="flex items-center space-x-4 mb-3 sm:mb-0">
+                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 ${
                           log.status === 'granted' ? 'bg-green-50 text-success-green' : 'bg-red-50 text-error-red'
                         }`}>
-                          {log.status === 'granted' ? <CheckCircle2 className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
+                          {log.status === 'granted' ? <CheckCircle2 className="w-7 h-7" /> : <XCircle className="w-7 h-7" />}
                         </div>
                         <div>
-                          <p className="font-bold text-slate-800">{log.plateNumber}</p>
-                          <p className="text-xs text-slate-400 font-medium">
-                            {log.residentName || 'Unknown Visitor'} • {log.timestamp.toLocaleDateString()} {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            {log.action && (
-                              <span className={`ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
-                                log.action === 'check-in' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
-                              }`}>
-                                {log.action === 'check-in' ? 'In' : 'Out'}
-                              </span>
-                            )}
+                          <p className="font-black text-slate-800 text-xl tracking-tight">{log.plateNumber}</p>
+                          <p className="text-sm text-slate-500 font-bold">
+                            {log.visitorName || log.residentName || 'Unknown'} • {log.timestamp.toLocaleDateString()} {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </p>
-                          <p className="text-[10px] text-deep-blue font-semibold mt-1">
-                            {sites.find(s => s.id === log.siteId)?.name || log.companyName} • {log.guardName}
+                          <p className="text-xs text-deep-blue/60 font-black mt-0.5 uppercase tracking-wide">
+                            {log.purpose ? `${log.purpose} visiting ${log.hostName || 'Resident'}` : (sites.find(s => s.id === log.siteId)?.name || log.companyName)}
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center space-x-3">
-                        <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          log.status === 'granted' ? 'bg-green-100 text-success-green' : 'bg-red-100 text-error-red'
+                      <div className="flex items-center justify-between sm:justify-end space-x-4">
+                        <div className={`px-4 py-2 rounded-2xl text-xs font-black uppercase tracking-widest ${
+                          log.status === 'granted' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                         }`}>
-                          {log.status === 'granted' ? 'Passed' : 'Denied'}
+                          {log.status === 'granted' ? 'Passed' : 'Blocked'}
                         </div>
-                        <Settings className="w-4 h-4 text-slate-400" />
+                        
+                        <div className="flex items-center space-x-2">
+                          <span className={`px-4 py-2 rounded-2xl text-xs font-black uppercase tracking-widest ${
+                            log.action === 'check-in' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+                          }`}>
+                            {log.action === 'check-in' ? 'Inside' : 'Out'}
+                          </span>
+                          
+                          {log.action === 'check-in' && log.status === 'granted' && (
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCheckOut(log.id);
+                              }}
+                              className="bg-amber-500 hover:bg-amber-600 text-white font-black px-6 py-4 rounded-2xl text-sm shadow-md active:scale-95 transition-all min-h-[50px] min-w-[120px]"
+                            >
+                              Check-Out
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}

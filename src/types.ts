@@ -86,11 +86,13 @@ export interface Resident {
 
 export interface GuestEntry {
   name: string;
-  idType: string;
+  phone: string;
   idNumber: string;
-  purpose: string;
+  idType: string;
+  hostName: string;
+  purpose: 'Resident' | 'Guest' | 'Delivery' | 'Service' | 'Emergency';
   plateNumber: string;
-  faceBase64?: string;
+  idPhotoUrl?: string;
 }
 
 export interface AccessLog {
@@ -99,15 +101,16 @@ export interface AccessLog {
   plateNumber: string;
   status: 'granted' | 'denied';
   action: 'check-in' | 'check-out';
-  residentName?: string;
+  residentName: string;
+  visitorName?: string;
+  visitorPhone?: string;
+  visitorIdNumber?: string;
+  hostName?: string;
+  purpose?: string;
   siteId?: string;
   companyName?: string;
   guardName?: string;
-  guestDetails?: {
-    idType: string;
-    idNumber: string;
-    purpose: string;
-  };
+  parkingNumber?: string;
 }
 
 export interface Stats {
