@@ -42,7 +42,7 @@ import {
   Keyboard,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Screen, Resident, AccessLog, Stats, GuestEntry, User as AppUser, Company, Site, Vehicle, BannedUser, UserRole, Residence } from './types';
+import { Screen, Resident, AccessLog, Stats, GuestEntry, User as AppUser, Company, Site, Vehicle, BannedUser, UserRole, Residence, CompanySettings } from './types';
 import { GoogleGenAI, Type } from "@google/genai";
 import Webcam from 'react-webcam';
 import { jsPDF } from 'jspdf';
@@ -50,9 +50,16 @@ import autoTable from 'jspdf-autotable';
 import { QRCodeCanvas } from 'qrcode.react';
 import jsQR from 'jsqr';
 
+const DEFAULT_COMPANY_SETTINGS = {
+  enableGuestEntry: true,
+  enableVehicleVerification: true,
+  enableAuthorizedVehicles: true,
+  enableBannedDatabase: true,
+};
+
 const MOCK_COMPANIES: Company[] = [
-  { id: 'c1', name: 'SecureCorp Solutions', adminId: 'u2' },
-  { id: 'c2', name: 'Global Guarding Inc', adminId: 'u5' },
+  { id: 'c1', name: 'SecureCorp Solutions', adminId: 'u2', settings: { ...DEFAULT_COMPANY_SETTINGS } },
+  { id: 'c2', name: 'Global Guarding Inc', adminId: 'u5', settings: { ...DEFAULT_COMPANY_SETTINGS } },
 ];
 
 const MOCK_SITES: Site[] = [
@@ -272,6 +279,14 @@ export default function App() {
     const saved = localStorage.getItem('app_companies');
     return saved ? JSON.parse(saved) : MOCK_COMPANIES;
   });
+
+  const getCompanySettings = (companyId?: string) => {
+    if (!companyId) return DEFAULT_COMPANY_SETTINGS;
+    const company = companies.find(c => c.id === companyId);
+    return company?.settings || DEFAULT_COMPANY_SETTINGS;
+  };
+
+  const currentSettings = getCompanySettings(currentUser?.companyId);
   const [sites, setSites] = useState<Site[]>(() => {
     const saved = localStorage.getItem('app_sites');
     return saved ? JSON.parse(saved) : MOCK_SITES;
@@ -1296,323 +1311,183 @@ export default function App() {
             className="flex-1 flex flex-col"
           >
             {currentUser?.role === 'guard' ? (
-              /* Guard Dashboard (New Layout) */
-              <div className="flex-1 flex flex-col bg-slate-50">
-                {/* Header */}
-                <div className="bg-[#b02029] p-6 pb-12 rounded-b-[40px] shadow-[0_10px_40px_rgba(176,32,41,0.3)] relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-full shimmer opacity-10 pointer-events-none" />
-                  <div className="flex justify-between items-center mb-8 relative z-10">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md border border-white/10 shadow-lg">
-                        <User className="text-white w-6 h-6" />
-                      </div>
-                      <div>
-                        <p className="text-white/70 text-[10px] font-bold uppercase tracking-widest">Active Duty</p>
-                        <h2 className="text-white font-black text-xl tracking-tight">
-                          Officer {currentUser?.username}
-                        </h2>
-                      </div>
+              /* Guard Dashboard — Clean, professional, layman-friendly */
+              <div className="flex-1 flex flex-col bg-slate-50 overflow-y-auto">
+                {/* Header Banner */}
+                <div className="bg-[#b02029] px-6 pt-6 pb-14 relative overflow-hidden">
+                  <div className="absolute -top-10 -right-10 w-48 h-48 bg-white/5 rounded-full" />
+                  <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-white/5 rounded-full" />
+                  <div className="flex justify-between items-center mb-6 relative z-10">
+                    <div>
+                      <p className="text-white/60 text-xs font-semibold uppercase tracking-widest">Gate Officer</p>
+                      <h1 className="text-white font-black text-2xl tracking-tight">{currentUser?.username}</h1>
                     </div>
-                    <motion.button 
-                      whileHover={{ scale: 1.1, rotate: 5 }}
-                      whileTap={{ scale: 0.9 }}
-                      onClick={handleLogout}
-                      className="p-3 bg-white/10 rounded-2xl text-white hover:bg-white/20 backdrop-blur-md transition-colors border border-white/10"
-                    >
+                    <motion.button whileTap={{ scale: 0.9 }} onClick={handleLogout}
+                      className="w-11 h-11 bg-white/15 rounded-2xl flex items-center justify-center text-white border border-white/20">
                       <LogOut className="w-5 h-5" />
                     </motion.button>
                   </div>
-
-                  {/* Stats Grid */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-white/10 backdrop-blur-md border border-white/10 p-5 rounded-[32px]">
-                      <p className="text-white/60 text-[10px] font-bold uppercase tracking-wider mb-1">Today's Entries</p>
-                      <p className="text-white text-4xl font-bold">{stats.entries}</p>
+                  <div className="grid grid-cols-2 gap-3 relative z-10">
+                    <div className="bg-white/15 backdrop-blur-md rounded-2xl p-4 border border-white/10">
+                      <p className="text-white/60 text-[10px] font-bold uppercase tracking-wider">Entered Today</p>
+                      <p className="text-white text-3xl font-black mt-1">{stats.entries}</p>
                     </div>
-                    <div className="bg-white/10 backdrop-blur-md border border-white/10 p-5 rounded-[32px]">
-                      <p className="text-white/60 text-[10px] font-bold uppercase tracking-wider mb-1">Denied Access</p>
-                      <p className="text-white text-4xl font-bold">{stats.denied}</p>
+                    <div className="bg-white/15 backdrop-blur-md rounded-2xl p-4 border border-white/10">
+                      <p className="text-white/60 text-[10px] font-bold uppercase tracking-wider">Denied Today</p>
+                      <p className="text-white text-3xl font-black mt-1">{stats.denied}</p>
                     </div>
                   </div>
                 </div>
 
-                {/* Quick Access to Authorized List */}
-                <div className="px-6 -mt-6">
-                  <button 
-                    onClick={() => navigate('authorized-list-report')}
-                    className="w-full bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between active:scale-[0.98] transition-all"
-                  >
-                    <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 bg-slate-50 text-slate-400 rounded-xl flex items-center justify-center">
-                        <FileText className="w-5 h-5" />
-                      </div>
-                      <span className="font-bold text-slate-700">Authorized List</span>
-                    </div>
-                    <ArrowRight className="w-5 h-5 text-slate-300" />
-                  </button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto">
-                  <div className="p-6 pt-8 space-y-8">
-                    {/* Scanning Section */}
-                    <div className="grid grid-cols-2 gap-4">
-                      <button 
-                        onClick={() => handleScanVehicle('qr')}
-                        disabled={isScanningVehicle !== null}
-                        className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center space-y-3 active:scale-95 transition-all disabled:opacity-50"
-                      >
-                        <div className="w-14 h-14 bg-blue-50 text-deep-blue rounded-2xl flex items-center justify-center">
-                          {isScanningVehicle === 'qr' ? <Loader2 className="w-8 h-8 animate-spin" /> : <QrCode className="w-8 h-8 text-[#b02029]" />}
-                        </div>
-                        <span className="font-bold text-slate-700">Scan QR</span>
-                      </button>
-                      <button 
-                        onClick={() => handleScanVehicle('plate')}
-                        disabled={isScanningVehicle !== null}
-                        className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center space-y-3 active:scale-95 transition-all disabled:opacity-50"
-                      >
-                        <div className="w-14 h-14 bg-slate-50 text-slate-600 rounded-2xl flex items-center justify-center">
-                          {isScanningVehicle === 'plate' ? <Loader2 className="w-8 h-8 animate-spin" /> : <Scan className="w-8 h-8 text-[#b02029]" />}
-                        </div>
-                        <span className="font-bold text-slate-700">Scan Plate</span>
-                      </button>
-                    </div>
-
-                    {/* Sticky Manual Entry Bar */}
-                    <div className="sticky top-0 z-30 -mx-6 px-6 py-4 bg-slate-50/95 backdrop-blur-md border-b border-slate-100/50 shadow-sm">
-                      <div className="relative">
-                        <form 
-                          onSubmit={handleManualPlateSubmit}
-                          className={`bg-white p-4 rounded-[32px] shadow-lg border transition-all duration-300 flex items-center space-x-3 ${isManualInputFocused ? 'border-deep-blue ring-4 ring-deep-blue/5' : 'border-slate-100'}`}
-                        >
-                          <button 
-                            type="button"
-                            onClick={() => setShowKeypad(!showKeypad)}
-                            className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 active:scale-95 transition-all ${showKeypad ? 'bg-deep-blue text-white' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
-                          >
-                            <Keyboard className="w-6 h-6" />
-                          </button>
-                          <div className="flex-1 flex items-center">
-                            <input 
-                              ref={manualPlateInputRef}
-                              type="text" 
-                              placeholder="T 123 ABC"
-                              value={manualPlate}
-                              onFocus={() => setIsManualInputFocused(true)}
-                              onBlur={() => setTimeout(() => setIsManualInputFocused(false), 200)}
-                              onChange={(e) => {
-                                const formatted = formatTanzanianPlate(e.target.value);
-                                setManualPlate(formatted);
-                                setPlateFormatError(null);
-                              }}
-                              className="w-full bg-transparent border-none focus:ring-0 font-bold text-slate-700 placeholder:text-slate-300 placeholder:font-medium uppercase"
-                            />
-                            <ChevronDown className={`w-5 h-5 text-slate-300 transition-transform duration-300 ${isManualInputFocused ? 'rotate-180' : ''}`} />
+                {/* Content */}
+                <div className="-mt-6 px-5 space-y-4 pb-8">
+                  {/* Vehicle Check Card */}
+                  {currentSettings.enableVehicleVerification && (
+                    <div className="bg-white rounded-[28px] shadow-lg border border-slate-100 p-5">
+                      <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-4">Check a Vehicle</p>
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                        <motion.button whileTap={{ scale: 0.96 }}
+                          onClick={() => handleScanVehicle('qr')} disabled={isScanningVehicle !== null}
+                          className="flex flex-col items-center justify-center bg-rose-50 border-2 border-rose-100 rounded-[20px] py-5 space-y-2.5 disabled:opacity-50 transition-all">
+                          <div className="w-14 h-14 bg-[#b02029] rounded-2xl flex items-center justify-center shadow-lg shadow-[#b02029]/30">
+                            {isScanningVehicle === 'qr' ? <Loader2 className="w-7 h-7 text-white animate-spin" /> : <QrCode className="w-7 h-7 text-white" />}
                           </div>
-                          <button 
-                            type="submit"
-                            disabled={!manualPlate.trim()}
-                            className="bg-[#d49a9a] text-white px-6 py-3 rounded-2xl font-bold text-sm active:scale-95 transition-all disabled:opacity-50 disabled:scale-100"
-                          >
-                            Verify
-                          </button>
-                        </form>
+                          <div className="text-center">
+                            <p className="font-black text-slate-700 text-sm">Scan QR Code</p>
+                            <p className="text-[10px] text-slate-400">Point at QR sticker</p>
+                          </div>
+                        </motion.button>
+                        <motion.button whileTap={{ scale: 0.96 }}
+                          onClick={() => handleScanVehicle('plate')} disabled={isScanningVehicle !== null}
+                          className="flex flex-col items-center justify-center bg-slate-50 border-2 border-slate-100 rounded-[20px] py-5 space-y-2.5 disabled:opacity-50 transition-all">
+                          <div className="w-14 h-14 bg-slate-800 rounded-2xl flex items-center justify-center shadow-lg shadow-slate-800/20">
+                            {isScanningVehicle === 'plate' ? <Loader2 className="w-7 h-7 text-white animate-spin" /> : <Scan className="w-7 h-7 text-white" />}
+                          </div>
+                          <div className="text-center">
+                            <p className="font-black text-slate-700 text-sm">Scan Plate</p>
+                            <p className="text-[10px] text-slate-400">Point at number plate</p>
+                          </div>
+                        </motion.button>
+                      </div>
+                      <div className="flex items-center space-x-3 my-3">
+                        <div className="flex-1 h-px bg-slate-100" />
+                        <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">or type plate</span>
+                        <div className="flex-1 h-px bg-slate-100" />
+                      </div>
+                      <form onSubmit={handleManualPlateSubmit} className="flex items-center space-x-2">
+                        <div className={`flex-1 flex items-center bg-slate-50 border-2 rounded-2xl px-4 transition-all duration-200 ${isManualInputFocused ? 'border-[#b02029] bg-white' : 'border-slate-100'}`}>
+                          <input ref={manualPlateInputRef} type="text" placeholder="T 123 ABC" value={manualPlate}
+                            onFocus={() => setIsManualInputFocused(true)}
+                            onBlur={() => setTimeout(() => setIsManualInputFocused(false), 200)}
+                            onChange={(e) => { setManualPlate(formatTanzanianPlate(e.target.value)); setPlateFormatError(null); }}
+                            className="flex-1 bg-transparent border-none focus:ring-0 font-black text-slate-800 placeholder:font-normal placeholder:text-slate-300 uppercase py-4 text-sm tracking-wider" />
+                          {manualPlate ? <button type="button" onClick={() => setManualPlate('')}><XCircle className="w-4 h-4 text-slate-300" /></button> : null}
+                        </div>
+                        <button type="submit" disabled={!manualPlate.trim()}
+                          className="bg-[#b02029] text-white px-5 py-4 rounded-2xl font-bold text-sm disabled:opacity-40 active:scale-95 transition-all shadow-lg shadow-[#b02029]/20">
+                          Check
+                        </button>
+                      </form>
+                      <AnimatePresence>
+                        {plateFormatError && (
+                          <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                            className="text-red-500 text-xs font-bold mt-2 ml-1">{plateFormatError}</motion.p>
+                        )}
+                      </AnimatePresence>
+                      <AnimatePresence>
+                        {isManualInputFocused && (
+                          <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                            className="mt-2 bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden max-h-44 overflow-y-auto">
+                            {vehicles.filter(v => !manualPlate.trim() || v.plateNumber.toUpperCase().includes(manualPlate.trim().toUpperCase())).slice(0, 6).map(v => (
+                              <button key={v.id} type="button"
+                                onClick={() => { setManualPlate(v.plateNumber); setIsManualInputFocused(false); }}
+                                className="w-full px-4 py-3 flex items-center space-x-3 hover:bg-slate-50 border-b border-slate-50 last:border-0 text-left">
+                                <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                  <Car className="w-4 h-4 text-slate-400" />
+                                </div>
+                                <div>
+                                  <p className="font-bold text-slate-800 text-sm">{v.plateNumber}</p>
+                                  <p className="text-[10px] text-slate-400">{v.ownerName}</p>
+                                </div>
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
 
-                        {/* Error Message for Plate Format */}
-                        <AnimatePresence>
-                          {plateFormatError && (
-                            <motion.div 
-                              initial={{ opacity: 0, y: -10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -10 }}
-                              className="absolute -top-8 left-0 right-0 text-center"
-                            >
-                              <span className="bg-red-500 text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-lg">
-                                {plateFormatError}
-                              </span>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
+                  {/* Guest Registration */}
+                  {currentSettings.enableGuestEntry && (
+                    <motion.button whileTap={{ scale: 0.98 }}
+                      onClick={() => { setGuestData({ name: '', idType: '', idNumber: '', purpose: '', plateNumber: '' }); navigate('guest-entry'); }}
+                      className="w-full bg-white rounded-[28px] shadow-lg border border-slate-100 p-5 flex items-center space-x-4">
+                      <div className="w-14 h-14 bg-emerald-500 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/30 flex-shrink-0">
+                        <UserPlus className="w-7 h-7 text-white" />
+                      </div>
+                      <div className="text-left flex-1">
+                        <p className="font-black text-slate-800">Register a Guest</p>
+                        <p className="text-xs text-slate-400 font-medium mt-0.5">Capture ID and photo for visitor</p>
+                      </div>
+                      <ArrowRight className="w-5 h-5 text-slate-300 flex-shrink-0" />
+                    </motion.button>
+                  )}
 
-                        {/* Plate Suggestions Dropdown */}
-                        <AnimatePresence>
-                          {isManualInputFocused && (
-                            <motion.div 
-                              initial={{ opacity: 0, y: -10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -10 }}
-                              className="absolute top-full left-0 right-0 mt-2 bg-white rounded-[24px] shadow-2xl border border-slate-100 z-30 overflow-hidden max-h-64 overflow-y-auto"
-                            >
-                              {vehicles
-                                .filter(v => 
-                                  !manualPlate.trim() || 
-                                  v.plateNumber.toUpperCase().includes(manualPlate.trim().toUpperCase())
-                                )
-                                .slice(0, 10)
-                                .map(v => (
-                                  <button
-                                    key={v.id}
-                                    type="button"
-                                    onClick={() => {
-                                      setManualPlate(v.plateNumber);
-                                      setShowKeypad(false);
-                                      setIsManualInputFocused(false);
-                                    }}
-                                    className="w-full text-left px-6 py-4 hover:bg-slate-50 flex items-center justify-between transition-colors border-b border-slate-100 last:border-0"
-                                  >
-                                    <div className="flex items-center space-x-4">
-                                      <div className="w-8 h-8 bg-slate-50 rounded-lg flex items-center justify-center">
-                                        <Car className="w-4 h-4 text-slate-400" />
-                                      </div>
-                                      <div>
-                                        <p className="font-bold text-slate-800">{v.plateNumber}</p>
-                                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{v.ownerName}</p>
-                                      </div>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                      {v.vehicleNumber && (
-                                        <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded uppercase tracking-wider">
-                                          {v.vehicleNumber}
-                                        </span>
-                                      )}
-                                      <ArrowRight className="w-4 h-4 text-slate-300" />
-                                    </div>
-                                  </button>
-                                ))
-                              }
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
+                  {/* Authorized List */}
+                  {currentSettings.enableAuthorizedVehicles && (
+                    <motion.button whileTap={{ scale: 0.98 }}
+                      onClick={() => navigate('authorized-list-report')}
+                      className="w-full bg-white rounded-[28px] shadow-lg border border-slate-100 p-5 flex items-center space-x-4">
+                      <div className="w-14 h-14 bg-blue-500 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/30 flex-shrink-0">
+                        <FileText className="w-7 h-7 text-white" />
+                      </div>
+                      <div className="text-left flex-1">
+                        <p className="font-black text-slate-800">Authorized Vehicles</p>
+                        <p className="text-xs text-slate-400 font-medium mt-0.5">View the approved vehicles list</p>
+                      </div>
+                      <ArrowRight className="w-5 h-5 text-slate-300 flex-shrink-0" />
+                    </motion.button>
+                  )}
+
+                  {/* Recent Activity */}
+                  <div className="bg-white rounded-[28px] shadow-lg border border-slate-100 p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center space-x-2">
+                        <History className="w-5 h-5 text-slate-400" />
+                        <h3 className="font-black text-slate-800">Recent Activity</h3>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <button onClick={() => setLogs([])} className="text-red-400 text-xs font-bold px-2.5 py-1.5 rounded-xl hover:bg-red-50 flex items-center space-x-1 transition-colors">
+                          <Trash2 className="w-3 h-3" /><span>Clear</span>
+                        </button>
+                        <button onClick={() => navigate('full-recent-logs')} className="text-[#b02029] text-xs font-bold px-2.5 py-1.5 rounded-xl hover:bg-red-50 transition-colors">
+                          See All
+                        </button>
                       </div>
                     </div>
-
-                    {/* Custom Keypad */}
-                    <AnimatePresence>
-                      {showKeypad && (
-                        <motion.div 
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="bg-white p-4 rounded-[32px] shadow-sm border border-slate-100 grid grid-cols-10 gap-2">
-                            {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map(key => (
-                              <button
-                                key={key}
-                                onClick={() => setManualPlate(prev => prev + key)}
-                                className="h-12 bg-slate-50 rounded-xl font-bold text-slate-700 active:bg-slate-200 transition-colors"
-                              >
-                                {key}
-                              </button>
-                            ))}
-                            {['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'].map(key => (
-                              <button
-                                key={key}
-                                onClick={() => setManualPlate(prev => prev + key)}
-                                className="h-12 bg-slate-50 rounded-xl font-bold text-slate-700 active:bg-slate-200 transition-colors"
-                              >
-                                {key}
-                              </button>
-                            ))}
-                            <div className="col-span-1" />
-                            {['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'].map(key => (
-                              <button
-                                key={key}
-                                onClick={() => setManualPlate(prev => prev + key)}
-                                className="h-12 bg-slate-50 rounded-xl font-bold text-slate-700 active:bg-slate-200 transition-colors"
-                              >
-                                {key}
-                              </button>
-                            ))}
-                            <div className="col-span-1" />
-                            <div className="col-span-2" />
-                            {['Z', 'X', 'C', 'V', 'B', 'N', 'M'].map(key => (
-                              <button
-                                key={key}
-                                onClick={() => setManualPlate(prev => prev + key)}
-                                className="h-12 bg-slate-50 rounded-xl font-bold text-slate-700 active:bg-slate-200 transition-colors"
-                              >
-                                {key}
-                              </button>
-                            ))}
-                            <button
-                              onClick={() => setManualPlate(prev => prev.slice(0, -1))}
-                              className="col-span-1 h-12 bg-rose-50 text-rose-500 rounded-xl flex items-center justify-center active:bg-rose-100 transition-colors"
-                            >
-                              <Trash2 className="w-5 h-5" />
-                            </button>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
-                    {/* Recent Logs Card */}
-                    <div className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100">
-                      <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center space-x-2">
-                          <History className="text-slate-400 w-5 h-5" />
-                          <h3 className="font-bold text-slate-800">Recent Logs</h3>
-                        </div>
-                        <div className="flex items-center space-x-4">
-                          <button 
-                            onClick={() => setLogs([])}
-                            className="flex items-center space-x-2 text-red-500 text-sm font-bold hover:bg-red-50 px-3 py-1.5 rounded-xl transition-colors"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            <span>Clear</span>
-                          </button>
-                          <button 
-                            onClick={() => setShowExportModal(true)}
-                            className="flex items-center space-x-2 text-[#b02029] text-sm font-bold hover:bg-red-50 px-3 py-1.5 rounded-xl transition-colors"
-                          >
-                            <FileDown className="w-4 h-4" />
-                          </button>
-                          <button 
-                            onClick={() => navigate('full-recent-logs')}
-                            className="p-1.5 text-[#b02029] hover:bg-red-50 rounded-xl transition-colors"
-                          >
-                            <ArrowRight className="w-5 h-5" />
-                          </button>
-                        </div>
+                    {logs.length === 0 ? (
+                      <div className="py-8 flex flex-col items-center text-slate-300 space-y-2">
+                        <History className="w-10 h-10" />
+                        <p className="text-sm font-medium">No activity yet today</p>
                       </div>
-                      <div className="space-y-4">
-                        {logs.slice(0, 5).map((log) => (
-                          <div 
-                            key={log.id} 
-                            className="flex items-center justify-between p-3 rounded-2xl hover:bg-slate-50 transition-colors"
-                          >
-                            <div className="flex items-center space-x-4">
-                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                                log.status === 'granted' ? 'bg-green-50 text-success-green' : 'bg-red-50 text-error-red'
-                              }`}>
-                                {log.status === 'granted' ? <CheckCircle2 className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
-                              </div>
-                              <div>
-                                <p className="font-bold text-slate-800">{log.plateNumber}</p>
-                                <p className="text-xs text-slate-400 font-medium">
-                                  {log.residentName || 'Unknown Visitor'} • {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                  {log.action && (
-                                    <span className={`ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
-                                      log.action === 'check-in' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
-                                    }`}>
-                                      {log.action === 'check-in' ? 'In' : 'Out'}
-                                    </span>
-                                  )}
-                                </p>
-                              </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {logs.slice(0, 6).map((log) => (
+                          <div key={log.id} className={`flex items-center space-x-3 px-3 py-3 rounded-2xl ${log.status === 'granted' ? 'bg-green-50' : 'bg-red-50'}`}>
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${log.status === 'granted' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                              {log.status === 'granted' ? <CheckCircle2 className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
                             </div>
-                            <div className="flex items-center space-x-3">
-                              <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                                log.status === 'granted' ? 'bg-green-100 text-success-green' : 'bg-red-100 text-error-red'
-                              }`}>
-                                {log.status === 'granted' ? 'Passed' : 'Denied'}
-                              </div>
-                              <Settings className="w-4 h-4 text-slate-400" />
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold text-slate-800 text-sm truncate">{log.plateNumber}</p>
+                              <p className="text-[10px] text-slate-400 font-medium truncate">{log.residentName || 'Unknown Visitor'} · {log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                             </div>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${log.action === 'check-in' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                              {log.action === 'check-in' ? 'IN' : 'OUT'}
+                            </span>
                           </div>
                         ))}
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1726,25 +1601,45 @@ export default function App() {
                           <p className="text-xs text-slate-400 font-medium">Add and configure residence names</p>
                         </div>
                       </motion.div>
+
+                      {/* Add Company Settings Button */}
+                      {currentUser?.role === 'company-admin' && (
+                        <motion.div 
+                          whileHover={{ scale: 1.02, translateY: -2 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={() => navigate('company-settings')}
+                          className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
+                        >
+                          <div className="w-14 h-14 bg-slate-50 text-slate-800 rounded-2xl flex items-center justify-center">
+                            <Settings className="w-8 h-8" />
+                          </div>
+                          <div className="text-left">
+                            <p className="font-bold text-slate-800">Company Settings</p>
+                            <p className="text-xs text-slate-400 font-medium">Enable or disable system modules</p>
+                          </div>
+                        </motion.div>
+                      )}
                     </div>
                   )}
 
                   {/* Shared Actions (Authorized Vehicles & Banned Database) */}
                   {(currentUser?.role === 'company-admin' || currentUser?.role === 'supervisor' || currentUser?.role === 'super-admin') && (
                     <div className="grid grid-cols-1 gap-4">
-                      <button 
-                        onClick={() => navigate('site-vehicles')}
-                        className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 active:scale-[0.98] transition-transform"
-                      >
-                        <div className="w-14 h-14 bg-orange-50 text-orange-600 rounded-2xl flex items-center justify-center">
-                          <Car className="w-8 h-8" />
-                        </div>
-                        <div className="text-left">
-                          <p className="font-bold text-slate-800">Authorized Vehicles</p>
-                          <p className="text-xs text-slate-400 font-medium">Manage allowed plate numbers</p>
-                        </div>
-                      </button>
-                      {(currentUser?.role === 'company-admin' || currentUser?.role === 'supervisor' || currentUser?.role === 'super-admin') && (
+                      {currentSettings.enableAuthorizedVehicles && (
+                        <button 
+                          onClick={() => navigate('site-vehicles')}
+                          className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 active:scale-[0.98] transition-transform"
+                        >
+                          <div className="w-14 h-14 bg-orange-50 text-orange-600 rounded-2xl flex items-center justify-center">
+                            <Car className="w-8 h-8" />
+                          </div>
+                          <div className="text-left">
+                            <p className="font-bold text-slate-800">Authorized Vehicles</p>
+                            <p className="text-xs text-slate-400 font-medium">Manage allowed plate numbers</p>
+                          </div>
+                        </button>
+                      )}
+                      {currentSettings.enableBannedDatabase && (currentUser?.role === 'company-admin' || currentUser?.role === 'supervisor' || currentUser?.role === 'super-admin') && (
                         <button 
                           onClick={() => navigate('banned-list')}
                           className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 active:scale-[0.98] transition-transform"
@@ -1764,62 +1659,68 @@ export default function App() {
                   {/* Super Admin Actions */}
                   {currentUser?.role === 'super-admin' && (
                     <>
-                      <div className="grid grid-cols-2 gap-4">
-                        <motion.div 
-                          whileHover={{ scale: 1.05, translateY: -2 }}
-                          whileTap={{ scale: 0.95 }}
-                          onClick={() => handleScanVehicle('qr')}
-                          className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center space-y-3 cursor-pointer hover:shadow-md transition-shadow"
-                        >
-                          <div className="w-14 h-14 bg-blue-50 text-deep-blue rounded-2xl flex items-center justify-center">
-                            <QrCode className="w-8 h-8 text-[#b02029]" />
+                      {currentSettings.enableVehicleVerification && (
+                        <>
+                          <div className="grid grid-cols-2 gap-4">
+                            <motion.div 
+                              whileHover={{ scale: 1.05, translateY: -2 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={() => handleScanVehicle('qr')}
+                              className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center space-y-3 cursor-pointer hover:shadow-md transition-shadow"
+                            >
+                              <div className="w-14 h-14 bg-blue-50 text-deep-blue rounded-2xl flex items-center justify-center">
+                                <QrCode className="w-8 h-8 text-[#b02029]" />
+                              </div>
+                              <span className="font-bold text-slate-700">Scan QR</span>
+                            </motion.div>
+                            <motion.div 
+                              whileHover={{ scale: 1.05, translateY: -2 }}
+                              whileTap={{ scale: 0.95 }}
+                              onClick={() => handleScanVehicle('plate')}
+                              className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center space-y-3 cursor-pointer hover:shadow-md transition-shadow"
+                            >
+                              <div className="w-14 h-14 bg-orange-50 text-orange-600 rounded-2xl flex items-center justify-center">
+                                <Car className="w-8 h-8 text-[#b02029]" />
+                              </div>
+                              <span className="font-bold text-slate-700">Scan Plate</span>
+                            </motion.div>
                           </div>
-                          <span className="font-bold text-slate-700">Scan QR</span>
-                        </motion.div>
-                        <motion.div 
-                          whileHover={{ scale: 1.05, translateY: -2 }}
-                          whileTap={{ scale: 0.95 }}
-                          onClick={() => handleScanVehicle('plate')}
-                          className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center space-y-3 cursor-pointer hover:shadow-md transition-shadow"
-                        >
-                          <div className="w-14 h-14 bg-orange-50 text-orange-600 rounded-2xl flex items-center justify-center">
-                            <Car className="w-8 h-8 text-[#b02029]" />
-                          </div>
-                          <span className="font-bold text-slate-700">Scan Plate</span>
-                        </motion.div>
-                      </div>
-                      <motion.div 
-                        whileHover={{ scale: 1.02, translateY: -2 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => navigate('manual')}
-                        className="w-full bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
-                      >
-                        <div className="w-14 h-14 bg-slate-50 text-slate-600 rounded-2xl flex items-center justify-center">
-                          <Search className="w-8 h-8 text-[#b02029]" />
-                        </div>
-                        <div className="text-left">
-                          <p className="font-bold text-slate-800">Manual Entry</p>
-                          <p className="text-xs text-slate-400 font-medium">Type plate number manually</p>
-                        </div>
-                      </motion.div>
+                          <motion.div 
+                            whileHover={{ scale: 1.02, translateY: -2 }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={() => navigate('manual')}
+                            className="w-full bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
+                          >
+                            <div className="w-14 h-14 bg-slate-50 text-slate-600 rounded-2xl flex items-center justify-center">
+                              <Search className="w-8 h-8 text-[#b02029]" />
+                            </div>
+                            <div className="text-left">
+                              <p className="font-bold text-slate-800">Manual Entry</p>
+                              <p className="text-xs text-slate-400 font-medium">Type plate number manually</p>
+                            </div>
+                          </motion.div>
+                        </>
+                      )}
 
-                      <motion.div 
-                        whileHover={{ scale: 1.02, translateY: -2 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={() => {
-                          setGuestData({ name: '', idType: '', idNumber: '', purpose: '', plateNumber: '' });
-                          navigate('guest-entry');
-                        }}
-                        className="w-full bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
-                      >
-                        <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">
-                          <UserPlus className="w-8 h-8 text-[#b02029]" />
-                        </div>
-                        <div className="text-left">
-                          <p className="font-bold text-slate-800">Guest Entry</p>
-                          <p className="text-xs text-slate-400 font-medium">Register visitor with Face Recognition</p>
-                        </div>
-                      </motion.div>
+                      {currentSettings.enableGuestEntry && (
+                        <motion.div 
+                          whileHover={{ scale: 1.02, translateY: -2 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={() => {
+                            setGuestData({ name: '', idType: '', idNumber: '', purpose: '', plateNumber: '' });
+                            navigate('guest-entry');
+                          }}
+                          className="w-full bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center space-x-4 cursor-pointer hover:shadow-md transition-shadow"
+                        >
+                          <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">
+                            <UserPlus className="w-8 h-8 text-[#b02029]" />
+                          </div>
+                          <div className="text-left">
+                            <p className="font-bold text-slate-800">Guest Entry</p>
+                            <p className="text-xs text-slate-400 font-medium">Register visitor with Face Recognition</p>
+                          </div>
+                        </motion.div>
+                      )}
                     </>
                   )}
 
@@ -2219,6 +2120,77 @@ export default function App() {
                   Register Guest & Grant Access
                 </button>
               </div>
+            </div>
+          </motion.div>
+        )}
+
+        {currentScreen === 'company-settings' && (
+          <motion.div 
+            key="company-settings"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            className="flex-1 bg-slate-50 flex flex-col"
+          >
+            <div className="bg-[#b02029] p-6 pb-8 rounded-b-[40px] shadow-lg">
+              <div className="flex items-center space-x-4 mb-6">
+                <button 
+                  onClick={() => navigate('dashboard')}
+                  className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <h2 className="text-white font-bold text-xl">Company Settings</h2>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-4 flex-1 overflow-y-auto">
+              <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 flex items-center space-x-4 mb-4">
+                <div className="w-12 h-12 bg-slate-100 text-slate-600 rounded-xl flex items-center justify-center">
+                  <Settings className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800">Module Configuration</h3>
+                  <p className="text-xs text-slate-400">Toggle the features below to enable or disable them for all your company's guards and sites.</p>
+                </div>
+              </div>
+
+              {Object.keys(currentSettings).map(key => {
+                const settingKey = key as keyof CompanySettings;
+                return (
+                  <div key={key} className="bg-white p-5 rounded-[24px] shadow-sm border border-slate-100 flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-slate-800">{key.replace(/enable/g, '').replace(/([A-Z])/g, ' $1').trim()}</p>
+                      <p className="text-xs text-slate-400 font-medium">Toggle access to this module</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        const newCompanies = companies.map(c => {
+                          if (c.id === currentUser?.companyId) {
+                            return {
+                              ...c,
+                              settings: {
+                                ...currentSettings,
+                                [settingKey]: !currentSettings[settingKey]
+                              }
+                            };
+                          }
+                          return c;
+                        });
+                        setCompanies(newCompanies);
+                      }}
+                      className={`w-12 h-6 rounded-full p-1 transition-colors relative flex items-center ${currentSettings[settingKey] ? 'bg-emerald-500' : 'bg-slate-200'}`}
+                    >
+                      <motion.div 
+                        initial={false}
+                        animate={{ x: currentSettings[settingKey] ? 24 : 0 }}
+                        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                        className="w-4 h-4 bg-white rounded-full shadow-sm"
+                      />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </motion.div>
         )}
@@ -3214,6 +3186,7 @@ export default function App() {
               <input 
                 type="file" 
                 accept="image/*" 
+                capture="environment"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
                 className="hidden"

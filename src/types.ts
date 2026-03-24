@@ -17,7 +17,15 @@ export type Screen =
   | 'site-vehicles'
   | 'authorized-list-report'
   | 'full-recent-logs'
-  | 'banned-list';
+  | 'banned-list'
+  | 'company-settings';
+
+export interface CompanySettings {
+  enableGuestEntry: boolean;
+  enableVehicleVerification: boolean;
+  enableAuthorizedVehicles: boolean;
+  enableBannedDatabase: boolean;
+}
 
 export interface User {
   id: string;
@@ -31,6 +39,7 @@ export interface Company {
   id: string;
   name: string;
   adminId: string;
+  settings?: CompanySettings;
 }
 
 export interface Site {
