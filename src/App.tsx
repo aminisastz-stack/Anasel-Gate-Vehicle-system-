@@ -359,6 +359,8 @@ export default function App() {
   const qrDetectingRef = useRef(false);
   const plateDetectingRef = useRef(false);
   const profileCamRef = useRef<Webcam>(null);
+  const idCamRef = useRef<Webcam>(null);
+  const [idCapturedImage, setIdCapturedImage] = useState<string | null>(null);
   const [showProfileCam, setShowProfileCam] = useState<'add' | 'edit' | null>(null);
   const profilePhotoInputRef = useRef<HTMLInputElement>(null);
   const editProfilePhotoInputRef = useRef<HTMLInputElement>(null);
@@ -3140,68 +3142,149 @@ export default function App() {
           </motion.div>
         )}
         {currentScreen === 'id-scan' && (
-          <motion.div 
+          <motion.div
             key="id-scan"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="flex-1 bg-black relative flex flex-col"
+            className="flex-1 bg-black relative flex flex-col overflow-hidden"
           >
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_transparent_0%,_rgba(0,0,0,0.8)_100%)] z-0" />
-            
-            <div className="relative z-10 p-6 flex justify-between items-center">
-              <button 
-                onClick={() => navigate('guest-entry')}
-                className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center text-white"
+            {/* Live Camera Feed or Captured Preview */}
+            {idCapturedImage ? (
+              <img src={idCapturedImage} alt="Captured ID" className="absolute inset-0 w-full h-full object-cover" />
+            ) : (
+              <Webcam
+                ref={idCamRef}
+                audio={false}
+                screenshotFormat="image/jpeg"
+                videoConstraints={{ facingMode: 'environment', aspectRatio: 16 / 9 }}
+                disablePictureInPicture={true}
+                forceScreenshotSourceSize={false}
+                imageSmoothing={true}
+                mirrored={false}
+                onUserMedia={() => {}}
+                onUserMediaError={() => {}}
+                screenshotQuality={0.92}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+            )}
+
+            {/* Dark vignette overlay */}
+            <div className="absolute inset-0 bg-black/50 z-10" />
+
+            {/* Top Bar */}
+            <div className="relative z-20 p-5 flex justify-between items-center">
+              <button
+                onClick={() => { setIdCapturedImage(null); navigate('guest-entry'); }}
+                className="w-11 h-11 bg-white/15 backdrop-blur-md rounded-2xl flex items-center justify-center text-white border border-white/20"
               >
-                <ChevronLeft className="w-6 h-6" />
+                <ChevronLeft className="w-5 h-5" />
               </button>
-              <h3 className="text-white font-bold">ID Scanner</h3>
-              <div className="w-12" />
+              <h3 className="text-white font-bold text-base tracking-wide">ID Scanner</h3>
+              <div className="w-11" />
             </div>
 
-            <div className="flex-1 flex items-center justify-center relative z-10 p-6">
-              <div className="w-full aspect-[1.586/1] border-2 border-dashed border-white/50 rounded-2xl flex flex-col items-center justify-center space-y-4 bg-white/5 backdrop-blur-sm relative overflow-hidden">
-                {isProcessingID ? (
-                  <div className="flex flex-col items-center space-y-4">
-                    <Loader2 className="w-12 h-12 text-emerald-400 animate-spin" />
-                    <p className="text-emerald-400 font-bold animate-pulse">AI is reading ID details...</p>
-                  </div>
-                ) : (
-                  <>
-                    <IdCard className="w-16 h-16 text-white/30" />
-                    <p className="text-white/60 text-center px-8 font-medium">Place ID card within the frame</p>
-                    
-                    {/* Corner accents */}
-                    <div className="absolute top-4 left-4 w-8 h-8 border-t-2 border-l-2 border-emerald-400 rounded-tl-lg" />
-                    <div className="absolute top-4 right-4 w-8 h-8 border-t-2 border-r-2 border-emerald-400 rounded-tr-lg" />
-                    <div className="absolute bottom-4 left-4 w-8 h-8 border-b-2 border-l-2 border-emerald-400 rounded-bl-lg" />
-                    <div className="absolute bottom-4 right-4 w-8 h-8 border-b-2 border-r-2 border-emerald-400 rounded-br-lg" />
-                  </>
-                )}
+            {/* ID Card Frame */}
+            <div className="relative z-20 flex-1 flex items-center justify-center px-6">
+              <div className="w-full" style={{ maxWidth: 340 }}>
+                <div className="relative w-full" style={{ aspectRatio: '1.586 / 1' }}>
+                  {/* Semi-transparent cutout border */}
+                  <div className="absolute inset-0 rounded-2xl border-2 border-dashed border-white/40" />
+
+                  {isProcessingID && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center space-y-3 bg-black/50 rounded-2xl z-10">
+                      <Loader2 className="w-10 h-10 text-emerald-400 animate-spin" />
+                      <p className="text-emerald-400 font-bold text-sm animate-pulse">Reading ID with AI...</p>
+                    </div>
+                  )}
+
+                  {!idCapturedImage && !isProcessingID && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center space-y-2">
+                      <IdCard className="w-12 h-12 text-white/25" />
+                      <p className="text-white/60 text-sm font-medium text-center px-4">Place ID card within the frame</p>
+                    </div>
+                  )}
+
+                  {/* Corner brackets — animated green */}
+                  <motion.div animate={{ opacity: [0.6, 1, 0.6] }} transition={{ repeat: Infinity, duration: 2 }}
+                    className="absolute top-0 left-0 w-8 h-8 border-t-[3px] border-l-[3px] border-emerald-400 rounded-tl-xl" />
+                  <motion.div animate={{ opacity: [0.6, 1, 0.6] }} transition={{ repeat: Infinity, duration: 2, delay: 0.3 }}
+                    className="absolute top-0 right-0 w-8 h-8 border-t-[3px] border-r-[3px] border-emerald-400 rounded-tr-xl" />
+                  <motion.div animate={{ opacity: [0.6, 1, 0.6] }} transition={{ repeat: Infinity, duration: 2, delay: 0.6 }}
+                    className="absolute bottom-0 left-0 w-8 h-8 border-b-[3px] border-l-[3px] border-emerald-400 rounded-bl-xl" />
+                  <motion.div animate={{ opacity: [0.6, 1, 0.6] }} transition={{ repeat: Infinity, duration: 2, delay: 0.9 }}
+                    className="absolute bottom-0 right-0 w-8 h-8 border-b-[3px] border-r-[3px] border-emerald-400 rounded-br-xl" />
+
+                  {/* Scanning line animation */}
+                  {!idCapturedImage && !isProcessingID && (
+                    <motion.div
+                      animate={{ top: ['10%', '90%', '10%'] }}
+                      transition={{ repeat: Infinity, duration: 2.5, ease: 'linear' }}
+                      className="absolute left-2 right-2 h-0.5 bg-emerald-400/60 blur-[1px] z-10"
+                      style={{ position: 'absolute' }}
+                    />
+                  )}
+                </div>
+
+                <p className="text-white/40 text-center text-xs font-medium mt-4">
+                  {idCapturedImage ? 'Tap "Use Photo" to process or "Retake" to try again' : 'Hold steady — keep the card flat and fully visible'}
+                </p>
               </div>
             </div>
 
-            <div className="relative z-10 p-12 space-y-4">
-              <input 
-                type="file" 
-                accept="image/*" 
-                capture="environment"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full bg-white text-slate-900 font-bold py-5 rounded-[24px] shadow-xl flex items-center justify-center space-x-3 active:scale-[0.98] transition-all"
-              >
-                <Upload className="w-6 h-6" />
-                <span>Upload ID Photo</span>
-              </button>
-              <p className="text-white/40 text-center text-xs font-medium">AI will automatically fill the form after scanning</p>
+            {/* Bottom Controls */}
+            <div className="relative z-20 px-6 pb-10 space-y-3">
+              {idCapturedImage ? (
+                <>
+                  <button
+                    disabled={isProcessingID}
+                    onClick={async () => {
+                      const res = await fetch(idCapturedImage);
+                      const blob = await res.blob();
+                      const file = new File([blob], 'id_capture.jpg', { type: 'image/jpeg' });
+                      const syntheticEvent = { target: { files: [file] } } as unknown as React.ChangeEvent<HTMLInputElement>;
+                      handleFileUpload(syntheticEvent);
+                    }}
+                    className="w-full bg-emerald-500 text-white font-bold py-4 rounded-[20px] shadow-lg shadow-emerald-500/30 flex items-center justify-center space-x-3 active:scale-[0.98] transition-all disabled:opacity-60"
+                  >
+                    {isProcessingID ? <Loader2 className="w-5 h-5 animate-spin" /> : <IdCard className="w-5 h-5" />}
+                    <span>{isProcessingID ? 'Processing...' : 'Use Photo'}</span>
+                  </button>
+                  <button
+                    onClick={() => setIdCapturedImage(null)}
+                    className="w-full bg-white/10 text-white font-bold py-4 rounded-[20px] border border-white/20 active:scale-[0.98] transition-all"
+                  >
+                    Retake
+                  </button>
+                </>
+              ) : (
+                <>
+                  {/* Capture from camera */}
+                  <button
+                    onClick={() => {
+                      const imageSrc = idCamRef.current?.getScreenshot();
+                      if (imageSrc) setIdCapturedImage(imageSrc);
+                    }}
+                    className="w-full bg-white text-slate-900 font-bold py-4 rounded-[20px] shadow-xl flex items-center justify-center space-x-3 active:scale-[0.98] transition-all"
+                  >
+                    <Camera className="w-5 h-5" />
+                    <span>Capture ID Card</span>
+                  </button>
+                  {/* Hidden file input for gallery fallback */}
+                  <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full bg-white/10 text-white/80 font-medium py-3 rounded-[20px] border border-white/15 text-sm active:scale-[0.98] transition-all flex items-center justify-center space-x-2"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>Upload from Gallery</span>
+                  </button>
+                </>
+              )}
             </div>
           </motion.div>
         )}
+
 
         {(currentScreen === 'success' || currentScreen === 'denied') && (
           <motion.div 
