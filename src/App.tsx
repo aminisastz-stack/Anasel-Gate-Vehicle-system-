@@ -534,7 +534,7 @@ export default function App() {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
       const base64Data = imageSrc.split(',')[1];
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-1.5-flash",
         contents: [
           {
             parts: [
@@ -697,7 +697,7 @@ export default function App() {
         const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
         const base64Data = imageSrc.split(',')[1];
         const response = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
+          model: "gemini-1.5-flash",
           contents: [
             {
               parts: [
@@ -1014,7 +1014,7 @@ export default function App() {
       const bannedDescriptions = bannedUsers.map(b => `${b.name}: ${b.description}`).join('\n');
       
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-1.5-flash",
         contents: [
           {
             parts: [
@@ -1152,7 +1152,7 @@ export default function App() {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-1.5-flash",
         contents: [
           {
             parts: [
@@ -1183,9 +1183,11 @@ export default function App() {
         idNumber: result.idNumber || ''
       }));
       navigate('guest-entry');
-    } catch (error) {
+    } catch (error: any) {
       console.error("AI Processing Error:", error);
-      alert("Failed to process ID. Please enter details manually.");
+      const errorMessage = error?.message || "Unknown error";
+      console.error("Detailed ID Scan Error:", errorMessage);
+      alert(`Failed to process ID (${errorMessage}). Please enter details manually.`);
       navigate('guest-entry');
     } finally {
       setIsProcessingID(false);
