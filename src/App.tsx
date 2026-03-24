@@ -196,17 +196,13 @@ export default function App() {
     setIsFlashlightOn(nextState);
 
     // If webcam is active, try to control the torch
-    if (webcamRef.current && webcamRef.current.video) {
-      const stream = webcamRef.current.video.srcObject as MediaStream;
+    const activeRef = webcamRef.current || idCamRef.current;
+    if (activeRef && activeRef.video) {
+      const stream = activeRef.video.srcObject as MediaStream;
       if (stream) {
         const track = stream.getVideoTracks()[0];
         if (track) {
           try {
-            // Check if getCapabilities exists (not supported in all browsers)
-            const capabilities = typeof track.getCapabilities === 'function' ? track.getCapabilities() as any : {};
-            
-            // Even if we can't detect it, we can try to apply it
-            // Some browsers support torch but don't list it in capabilities
             await track.applyConstraints({
               advanced: [{ torch: nextState }]
             } as any);
@@ -3164,7 +3160,16 @@ export default function App() {
                 forceScreenshotSourceSize={false}
                 imageSmoothing={true}
                 mirrored={false}
-                onUserMedia={() => {}}
+                onUserMedia={(stream) => {
+                  if (isFlashlightOn) {
+                    const track = stream.getVideoTracks()[0];
+                    if (track) {
+                      track.applyConstraints({
+                        advanced: [{ torch: true }]
+                      } as any).catch(e => console.warn('ID torch failed:', e));
+                    }
+                  }
+                }}
                 onUserMediaError={() => {}}
                 screenshotQuality={0.92}
                 className="absolute inset-0 w-full h-full object-cover"
@@ -3173,6 +3178,11 @@ export default function App() {
 
             {/* Dark vignette overlay */}
             <div className="absolute inset-0 bg-black/50 z-10" />
+
+            {/* Simulated Flashlight Glow */}
+            {isFlashlightOn && (
+              <div className="absolute inset-0 pointer-events-none z-10 bg-white/5 mix-blend-overlay" />
+            )}
 
             {/* Top Bar */}
             <div className="relative z-20 p-5 flex justify-between items-center">
@@ -3183,7 +3193,16 @@ export default function App() {
                 <ChevronLeft className="w-5 h-5" />
               </button>
               <h3 className="text-white font-bold text-base tracking-wide">ID Scanner</h3>
-              <div className="w-11" />
+              <button
+                onClick={toggleFlashlight}
+                className={`w-11 h-11 backdrop-blur-md rounded-2xl flex items-center justify-center transition-all duration-300 border ${
+                  isFlashlightOn 
+                    ? 'bg-yellow-400 text-slate-900 border-yellow-300 shadow-[0_0_15px_rgba(250,204,21,0.4)]' 
+                    : 'bg-white/10 text-white border-white/20 hover:bg-white/20'
+                }`}
+              >
+                <Flashlight className={`w-5 h-5 ${isFlashlightOn ? 'fill-current' : ''}`} />
+              </button>
             </div>
 
             {/* ID Card Frame */}
