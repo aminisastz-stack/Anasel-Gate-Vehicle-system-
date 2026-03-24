@@ -1,5 +1,5 @@
 {
-  "name": "Anasel Gate System",
+  "name": "Gate System",
   "description": "Professional security gate management system for real-time resident verification and access control.",
   "requestFramePermissions": [
     "camera"

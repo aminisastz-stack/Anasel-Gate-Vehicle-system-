@@ -935,7 +935,7 @@ export default function App() {
     // Add title
     doc.setFontSize(22);
     doc.setTextColor(10, 25, 49); // Deep blue
-    doc.text('Anasel Gate System', 14, 22);
+    doc.text('Gate System', 14, 22);
 
     doc.setFontSize(16);
     const adminCompanyName = companies.find(c => c.id === currentUser?.companyId)?.name || 'Security Company';
@@ -1207,7 +1207,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <h1 className="text-3xl font-bold text-white tracking-tight">Anasel Gate System</h1>
+            <h1 className="text-3xl font-bold text-white tracking-tight">Gate System</h1>
             <p className="text-white/60 font-medium">Verification System v1.0</p>
             
             <div className="flex items-center justify-center space-x-2 mt-4">
