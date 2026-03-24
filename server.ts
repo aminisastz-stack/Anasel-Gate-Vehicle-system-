@@ -9,7 +9,7 @@ import cors from 'cors';
 const app = express();
 app.use(express.json());
 app.use(cors());
-const PORT = 3000;
+const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3003;
 
 // Initialize DB Connection
 const useConnectionString = !!process.env.DATABASE_URL;
@@ -274,8 +274,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${port}`);
   });
 }
 
