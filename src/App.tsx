@@ -1384,7 +1384,7 @@ export default function App() {
                       <LogOut className="w-5 h-5" />
                     </motion.button>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 relative z-10">
+                  <div className="grid grid-cols-3 gap-3 relative z-10">
                     <div className="bg-white/15 backdrop-blur-md rounded-2xl p-4 border border-white/10">
                       <p className="text-white/60 text-[10px] font-bold uppercase tracking-wider">Entered Today</p>
                       <p className="text-white text-3xl font-black mt-1">{stats.entries}</p>
@@ -1392,6 +1392,10 @@ export default function App() {
                     <div className="bg-white/15 backdrop-blur-md rounded-2xl p-4 border border-white/10">
                       <p className="text-white/60 text-[10px] font-bold uppercase tracking-wider">Denied Today</p>
                       <p className="text-white text-3xl font-black mt-1">{stats.denied}</p>
+                    </div>
+                    <div className="bg-white/15 backdrop-blur-md rounded-2xl p-4 border border-white/10">
+                      <p className="text-white/60 text-[10px] font-bold uppercase tracking-wider">Inside Now</p>
+                      <p className="text-white text-3xl font-black mt-1 text-amber-400">{stats.currentlyInside}</p>
                     </div>
                   </div>
                 </div>
@@ -1592,14 +1596,18 @@ export default function App() {
                   </div>
 
                   {/* Stats Grid */}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-3 gap-4">
                     <div className="bg-white/10 backdrop-blur-md border border-white/10 p-4 rounded-3xl">
-                      <p className="text-white/60 text-xs font-bold uppercase tracking-wider mb-1">Today's Entries</p>
+                      <p className="text-white/60 text-xs font-bold uppercase tracking-wider mb-1">Entered Today</p>
                       <p className="text-white text-3xl font-bold">{stats.entries}</p>
                     </div>
                     <div className="bg-white/10 backdrop-blur-md border border-white/10 p-4 rounded-3xl">
-                      <p className="text-white/60 text-xs font-bold uppercase tracking-wider mb-1">Denied Access</p>
+                      <p className="text-white/60 text-xs font-bold uppercase tracking-wider mb-1">Denied Today</p>
                       <p className="text-white text-3xl font-bold">{stats.denied}</p>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-md border border-white/10 p-4 rounded-3xl">
+                      <p className="text-white/60 text-xs font-bold uppercase tracking-wider mb-1">Inside Now</p>
+                      <p className="text-white text-3xl font-bold text-amber-400">{stats.currentlyInside}</p>
                     </div>
                   </div>
                 </div>

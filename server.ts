@@ -59,6 +59,17 @@ async function setupDB() {
       );
     `);
     
+    // Migration: ensure new columns exist for the digital log book
+    const logCols = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'gate_verification'");
+    const existingLogCols = logCols.rows.map(r => r.column_name);
+    
+    if (!existingLogCols.includes('visitor_name')) await pool.query('ALTER TABLE gate_verification ADD COLUMN visitor_name TEXT');
+    if (!existingLogCols.includes('visitor_phone')) await pool.query('ALTER TABLE gate_verification ADD COLUMN visitor_phone TEXT');
+    if (!existingLogCols.includes('visitor_id_number')) await pool.query('ALTER TABLE gate_verification ADD COLUMN visitor_id_number TEXT');
+    if (!existingLogCols.includes('host_name')) await pool.query('ALTER TABLE gate_verification ADD COLUMN host_name TEXT');
+    if (!existingLogCols.includes('purpose')) await pool.query('ALTER TABLE gate_verification ADD COLUMN purpose TEXT');
+    if (!existingLogCols.includes('residence_id')) await pool.query('ALTER TABLE gate_verification ADD COLUMN residence_id VARCHAR(50)');
+    
     // Registered Vehicles Table (Mock data for verification)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS registered_vehicles (
